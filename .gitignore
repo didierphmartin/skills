@@ -1,0 +1,16 @@
+# OS / editor
+.DS_Store
+**/.DS_Store
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+# Node
+node_modules/
+# Auto-generated at app startup (user/runtime-specific) — would go stale
+**/references/mcp-catalog.md
+**/references/skills-catalog.md
+# Runtime scratch/output
+scratch/
+outputs/

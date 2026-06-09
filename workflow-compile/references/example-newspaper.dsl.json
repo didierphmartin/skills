@@ -1,0 +1,189 @@
+{
+  "name": "My Newspaper Journal",
+  "description": "Produces a journal from financial and biomedical information.",
+  "definition": {
+    "runtime_mode": "batch",
+    "nodes": [
+      {
+        "id": "1",
+        "node_type": "start",
+        "type": "start",
+        "agent_id": null,
+        "agent_name": null,
+        "config": {
+          "agent_type": null,
+          "type": "start",
+          "prompt": "Generate a report about the following subjects:\n- cryptos news\n- latest papers about vitamin D and the immune system",
+          "documents": []
+        },
+        "position": {
+          "x": 61,
+          "y": 250
+        },
+        "pos_x": 61,
+        "pos_y": 250
+      },
+      {
+        "id": "2",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": null,
+        "agent_name": "Crypto Researcher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [
+            "mcp_get_crypto_news",
+            "mcp_list_crypto_news_sources",
+            "mcp_get_financial_news"
+          ],
+          "agent_id": null,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "Crypto Researcher",
+          "isTemplate": false,
+          "bound_skill": null,
+          "description": "Tracks crypto news from RSS published by crypto magazines.",
+          "instructions": "## Scope\nThis agent ONLY handles queries related to cryptocurrency, blockchain technology, and digital assets.\n\n## Role & Identity\nYou are the Crypto Researcher, a specialized digital-asset news and analysis agent.\n\n## Hard Constraints\n- Do NOT provide investment advice or price predictions.\n- Do NOT recommend buying or selling any asset.\n\n## Persona\nYou are objective, balanced, and source-driven.",
+          "output_schema": null,
+          "skill_content": "## Procedure\nWhen a research query arrives:\n1. Identify the asset(s), protocol(s), or topic(s) in scope.\n2. Collect recent, reliable sources covering the query.\n3. Distinguish confirmed news from rumors or speculation.\n4. Cross-check conflicting reports before reporting.\n\n## Output Format\nFor each news item, provide:\n1. **Headline** \u2014 Brief one-line summary\n2. **Source** \u2014 Publication or origin\n3. **Date** \u2014 When reported\n4. **Summary** \u2014 2-3 sentence overview\n5. **Impact Assessment** \u2014 high / medium / low\n6. **Reliability** \u2014 Confirmed / Developing / Unverified",
+          "agent_provider": "kimi",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 391,
+          "y": 162
+        },
+        "pos_x": 391,
+        "pos_y": 162
+      },
+      {
+        "id": "3",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": 15,
+        "agent_name": "PubMed Researcher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [
+            "mcp_pubmed_build_query",
+            "mcp_pubmed_mesh_suggestions",
+            "mcp_pubmed_search"
+          ],
+          "agent_id": 15,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "PubMed Researcher",
+          "isTemplate": false,
+          "bound_skill": null,
+          "description": "Searches PubMed for scientific articles.",
+          "instructions": "# PubMed Researcher Agent\n\n## Scope\nThis agent ONLY handles queries related to biology and biomedical science.\n\n## Role & Identity\nYou are the PubMed Researcher, a specialized scientific literature agent.\n\n## Persona\nYou are methodical, scientifically rigorous, and precise.",
+          "output_schema": null,
+          "skill_content": "# Skill: PubMed Literature Review\n\n## Procedure\nWhen a research query arrives:\n1. Identify the key biomedical concepts, keywords, and scope of the question.\n2. Formulate appropriate PubMed search queries (using MeSH terms and Boolean operators where relevant).\n3. Retrieve and synthesize findings from relevant, recent, high-quality peer-reviewed publications.\n4. Prioritize systematic reviews, meta-analyses, and RCTs when available.\n\n## Output Format\nReturn a single markdown document with: Summary, Background, Key Findings (with inline PMID citations), Evidence Table (optional), Limitations & Gaps, Conclusion, References.",
+          "agent_provider": "grok",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 391,
+          "y": 338
+        },
+        "pos_x": 391,
+        "pos_y": 338
+      },
+      {
+        "id": "4",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": null,
+        "agent_name": "Newspaper Publisher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [],
+          "agent_id": null,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "Newspaper Publisher",
+          "isTemplate": false,
+          "bound_skill": null,
+          "description": "Takes multiple agents' output and formats their content into a newspaper.",
+          "instructions": "You are the Graphic Designer Agent, a specialist in editorial layout and typography. Your sole responsibility is to take content and reformat it into a richly styled, newspaper-inspired HTML document with embedded CSS.\n\n## Output Rules\n- Always return a single, complete, valid HTML file starting with <!DOCTYPE html>.\n- All CSS must be embedded inside a <style> block in the <head>.\n- Never alter facts.\n- Never omit content.\n- Always produce a masthead and a footer.\n\n## Persona\nYou are a seasoned broadsheet editor with decades of experience at international publications.",
+          "output_schema": null,
+          "skill_content": "",
+          "agent_provider": "deepseek",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 721,
+          "y": 250
+        },
+        "pos_x": 721,
+        "pos_y": 250
+      },
+      {
+        "id": "5",
+        "node_type": "output",
+        "type": "output",
+        "agent_id": null,
+        "agent_name": null,
+        "config": {
+          "agent_type": null,
+          "type": "output"
+        },
+        "position": {
+          "x": 1051,
+          "y": 250
+        },
+        "pos_x": 1051,
+        "pos_y": 250
+      }
+    ],
+    "edges": [
+      {
+        "from": "1",
+        "to": "2",
+        "from_port": "output_1"
+      },
+      {
+        "from": "1",
+        "to": "3",
+        "from_port": "output_1"
+      },
+      {
+        "from": "2",
+        "to": "4",
+        "from_port": "output_1"
+      },
+      {
+        "from": "3",
+        "to": "4",
+        "from_port": "output_1"
+      },
+      {
+        "from": "4",
+        "to": "5",
+        "from_port": "output_1"
+      }
+    ]
+  },
+  "triggers": {
+    "schedule": {
+      "enabled": false
+    }
+  },
+  "output_storage_enabled": 0,
+  "output_folder": null
+}

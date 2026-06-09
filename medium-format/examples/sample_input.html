@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test Article</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .pull-quote { font-size: 28px; }
+    .mono { font-family: "Fira Code", monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav><a href="/">Home</a> · <a href="/about">About</a></nav>
+  </header>
+  <main>
+    <article class="post">
+      <h1>The State of Async Python in 2025</h1>
+      <p class="byline">by <span style="font-weight: 700">Jane Doe</span> — May 2025</p>
+
+      <p>This is the opening paragraph. It contains a <span style="font-style: italic">subtle italic phrase</span>
+      and a <span class="mono">monospace span</span>.</p>
+
+      <h2>Background</h2>
+      <p>Some <b>bold</b> text and a <a href="/posts/old">relative link</a> here.
+      Also <a href="https://example.com">an absolute one</a>.</p>
+
+      <blockquote class="pull-quote">
+        Async is not magic — it just rearranges the wait.
+      </blockquote>
+
+      <h3>Code example</h3>
+      <pre>async def fetch():
+    async with httpx.AsyncClient() as client:
+        return await client.get("https://example.com")</pre>
+
+      <ul>
+        <li>asyncio is the standard</li>
+        <li>trio is the alternative</li>
+        <li>anyio bridges both</li>
+      </ul>
+
+      <figure>
+        <img src="./images/diagram.png" alt="Event loop diagram">
+        <figcaption>Figure 1. The async event loop.</figcaption>
+      </figure>
+
+      <h5>A small subheading</h5>
+      <p>Final paragraph with <i>italics</i> and inline <code>print("hi")</code>.</p>
+
+      <table>
+        <tr><th>Lib</th><th>Year</th></tr>
+        <tr><td>asyncio</td><td>2014</td></tr>
+        <tr><td>trio</td><td>2017</td></tr>
+      </table>
+
+      <script>console.log("tracking");</script>
+      <div class="ad-banner">Sponsored content here</div>
+    </article>
+  </main>
+  <footer>© 2025</footer>
+</body>
+</html>

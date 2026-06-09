@@ -1,0 +1,29 @@
+{
+  "patch": {
+    "reasoning": "Failure #2 shows the assistant refused to call the tool instead of attempting it. Failure #5 shows the assistant incorrectly triggered on 'Run my SEO audit' despite the request not being about citability. The prior rejected edits added pre-call warnings and out-of-scope language, but both caused regressions. The core issue is that the body doesn't clearly distinguish between pre-emptive refusal (bad) and correctly declining out-of-scope requests (good). I'll add a procedural distinction: always attempt the tool call when citability/quotability is mentioned, but politely decline when the request is clearly about something else (SEO audit, restaurant recommendations). I'll also strengthen the tool-call instruction to be more explicit about the attempt-first requirement.",
+    "edits": [
+      {
+        "op": "replace",
+        "target": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively. Always attempt `run_skill_script` first, even if you're uncertain whether the request is in scope.",
+        "content": "If the tool is genuinely missing from your tool list, say so **after** attempting the call. **Distinguish:** (1) If the user mentions citability/quotability/AI citation/GEO scoring, ALWAYS attempt the tool call first, even if uncertain. (2) If the request is clearly about something else (general SEO audit, business recommendations, unrelated tasks), politely decline without attempting the call."
+      },
+      {
+        "op": "insert_after",
+        "target": "The page URL is **positional**.",
+        "content": "\n**When to call this skill:** The user's request must involve analyzing how likely AI systems are to cite/quote a specific web page. Phrases like 'citability', 'quotable by AI', 'will ChatGPT cite', 'GEO score', 'optimize for AI answers' are in scope. General SEO audits, business recommendations, and other web analysis tasks are out of scope.\n"
+      }
+    ]
+  },
+  "applied": 1,
+  "skipped": [
+    {
+      "edit": {
+        "op": "replace",
+        "target": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively. Always attempt `run_skill_script` first, even if you're uncertain whether the request is in scope.",
+        "content": "If the tool is genuinely missing from your tool list, say so **after** attempting the call. **Distinguish:** (1) If the user mentions citability/quotability/AI citation/GEO scoring, ALWAYS attempt the tool call first, even if uncertain. (2) If the request is clearly about something else (general SEO audit, business recommendations, unrelated tasks), politely decline without attempting the call."
+      },
+      "reason": "replace: target not found"
+    }
+  ],
+  "reasoning": "Failure #2 shows the assistant refused to call the tool instead of attempting it. Failure #5 shows the assistant incorrectly triggered on 'Run my SEO audit' despite the request not being about citability. The prior rejected edits added pre-call warnings and out-of-scope language, but both caused regressions. The core issue is that the body doesn't clearly distinguish between pre-emptive refusal (bad) and correctly declining out-of-scope requests (good). I'll add a procedural distinction: always attempt the tool call when citability/quotability is mentioned, but politely decline when the request is clearly about something else (SEO audit, restaurant recommendations). I'll also strengthen the tool-call instruction to be more explicit about the attempt-first requirement."
+}

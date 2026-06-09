@@ -1,0 +1,29 @@
+{
+  "patch": {
+    "reasoning": "Failure #2 shows the assistant refused to call the tool pre-emptively instead of attempting the call. Failure #3 shows the assistant failed to apply the 5-category rubric when scoring. The body currently has a strong prohibition against pre-emptive refusal and mentions the rubric, but we can strengthen both. I'll add an explicit instruction to always attempt the tool call even if uncertain, and add a procedural checkpoint requiring explicit category scoring before producing the final output.",
+    "edits": [
+      {
+        "op": "replace",
+        "target": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively.",
+        "content": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively. Always attempt `run_skill_script` first, even if you're uncertain whether the request is in scope."
+      },
+      {
+        "op": "insert_after",
+        "target": "## Scoring procedure",
+        "content": "\n**Before writing the final output, you MUST explicitly score all five categories for each block.** Do not skip category scoring or produce the output table without first computing Answer Block Quality, Passage Self-Containment, Structural Readability, Statistical Density, and Uniqueness scores.\n"
+      }
+    ]
+  },
+  "applied": 1,
+  "skipped": [
+    {
+      "edit": {
+        "op": "replace",
+        "target": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively.",
+        "content": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively. Always attempt `run_skill_script` first, even if you're uncertain whether the request is in scope."
+      },
+      "reason": "replace: target not found"
+    }
+  ],
+  "reasoning": "Failure #2 shows the assistant refused to call the tool pre-emptively instead of attempting the call. Failure #3 shows the assistant failed to apply the 5-category rubric when scoring. The body currently has a strong prohibition against pre-emptive refusal and mentions the rubric, but we can strengthen both. I'll add an explicit instruction to always attempt the tool call even if uncertain, and add a procedural checkpoint requiring explicit category scoring before producing the final output."
+}

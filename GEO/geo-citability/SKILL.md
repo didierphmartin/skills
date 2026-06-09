@@ -1,0 +1,222 @@
+---
+name: geo-citability
+description: "Score how likely AI systems (ChatGPT, Claude, Perplexity, Gemini) are to cite or quote a web page, and produce specific rewrite suggestions. Use for: 'citability score', 'will AI cite my page', 'is my content quotable by AI', 'GEO content score', 'make my page more citable', 'AI citation readiness', 'why doesn't ChatGPT cite my article', 'optimize content for AI answers'. Pipeline: fetch the page -> strip nav/header/footer -> segment into content blocks at each H2/H3 -> per block compute exact word count, paragraph/list/table counts and statistic density -> emit the structured page breakdown. The LLM then scores each block against the 5-category citability rubric (answer-block quality, passage self-containment, structural readability, statistical density, uniqueness & original data) for a 0-100 page score with prioritized rewrite suggestions. Deterministic extraction and word counts come from the script; the qualitative scoring is the LLM's."
+dependencies: [beautifulsoup4]
+fetches_urls: false
+---
+
+<!-- SLOW_UPDATE_START -->
+<!-- Protected region. Only the optimizer's epoch-boundary slow-update process
+     writes here. Body-patcher (improve_body.py) rejects edits to this block.
+     Put pinned invariants here (e.g. "page URL is positional, never --url"). -->
+<!-- SLOW_UPDATE_END -->
+
+# geo-citability
+
+Score how likely AI systems are to **cite or quote** passages from a web page,
+and tell the user exactly how to make it more citable.
+
+AI models preferentially extract passages that are ~134-167 words long,
+self-contained, fact-rich, and answer a question in the first 1-2 sentences.
+This skill measures that "extractability" and produces a 0-100 citability score
+with concrete rewrites.
+
+> ## ✅ REQUIRED FIRST STEP — ALWAYS CALL THE TOOL
+>
+> When the user asks how citable / quotable a page is, your **first action** is
+> `run_skill_script` with `dir_name: geo-citability` and
+> `scripts/citability_parse.py`. The script fetches the page and segments it
+> into content blocks with exact word counts. Score from that — never from a
+> page you imagine.
+>
+> If the tool is genuinely missing from your tool list, say so **after**
+> attempting the call — never refuse pre-emptively.
+>
+> ## ⛔ NO FABRICATION
+>
+> The script prints the page's **block breakdown to stdout** — headings, block
+> text, exact word counts, paragraph/list/table/statistic counts.
+>
+> - The block list, block text, and all counts come from the script. Never
+>   invent a block, never invent a word count, never score a page you did not
+>   receive from the script.
+> - The five **category scores are your judgment** — apply the rubric below to
+>   the script's extracted blocks.
+> - If the script reports the page is empty or JS-rendered, say so; do not
+>   score an empty extraction.
+
+## Invocation — exact argv shapes
+
+> **Do NOT add `read_outputs` to this call.** The script prints its full
+> block breakdown to stdout — that stdout is your input. The `*-ANALYSIS`/`*-SCORE`
+> deliverable is what *you* author afterward, so it does not exist at run time;
+> listing it in `read_outputs` returns an empty result, which looks like a
+> failed run and triggers needless re-runs. Send only `dir_name`/`script`/`argv`.
+
+The page URL is **positional**.
+
+```json
+{ "dir_name": "geo-citability", "script": "scripts/citability_parse.py", "argv": ["https://example.com/blog/my-post"] }
+```
+
+Do not pass the URL with a flag. (`--url` exists as a backstop alias.)
+
+CLI for reference:
+
+```bash
+python scripts/citability_parse.py https://example.com/blog/my-post
+```
+
+## Division of labor
+
+| Step | Who | What |
+|---|---|---|
+| 1. Fetch + extract | **script** | Fetch page, strip nav/header/footer/aside, segment at H2/H3 |
+| 2. Measure | **script** | Per block: exact word count, paragraph/list/table counts, statistic-pattern count |
+| 3. Score | **you (LLM)** | Apply the 5-category rubric to each block |
+| 4. Aggregate | **you (LLM)** | Page score, strongest/weakest blocks, citability coverage |
+| 5. Rewrite | **you (LLM)** | Concrete rewrite suggestions for low-scoring blocks |
+
+## Citability Scoring Rubric (0-100)
+
+Score every block on five categories, then weight them.
+
+**Category 1 — Answer Block Quality (30%).** Does the block contain clear,
+quotable answer passages?
+
+| Score | Criteria |
+|---|---|
+| 90-100 | Opens with a 1-2 sentence direct answer; "X is…" / "X refers to…" patterns; first 40-60 words stand alone |
+| 70-89 | Most sections have clear answer openings; some definition patterns |
+| 50-69 | Some answer-like openings, but many answers buried mid-paragraph |
+| 30-49 | Answers generally buried; narrative-driven, not answer-driven |
+| 0-29 | No identifiable answer blocks |
+
+Look for: definition patterns ("X is …", "X refers to …"), answer-first
+structure, quantified answers, comparison answers.
+
+**Category 2 — Passage Self-Containment (25%).** Can a block be extracted and
+understood alone?
+
+| Score | Criteria |
+|---|---|
+| 90-100 | 80%+ blocks fully self-contained; each names its subject explicitly; no orphan pronouns |
+| 70-89 | 60-79% self-contained |
+| 50-69 | 40-59% self-contained |
+| 30-49 | 20-39% self-contained |
+| 0-29 | <20% — continuous narrative, extracting any paragraph loses meaning |
+
+Per-block checklist: names the subject (not "it"/"this"); understandable alone;
+contains ≥1 specific fact; 50-200 words; doesn't open with "But/However/And".
+
+**Category 3 — Structural Readability (20%).** Formatting AI can parse.
+
+| Score | Criteria |
+|---|---|
+| 90-100 | Clean H1>H2>H3; question-based headings; short paragraphs (2-4 sentences); tables for comparisons; lists for processes |
+| 70-89 | Good hierarchy with minor skips; some question headings; mostly short paragraphs |
+| 50-69 | Inconsistent hierarchy; few question headings; mixed paragraph length |
+| 30-49 | Minimal heading structure; long paragraphs dominate |
+| 0-29 | No/broken heading structure; wall-of-text |
+
+**Category 4 — Statistical Density (15%).** Specific, verifiable data points.
+Use the script's `statistics` count per block (calibrate to ~per-500-words).
+
+| Score | Criteria |
+|---|---|
+| 90-100 | 5+ statistics per 500 words; all claims sourced/dated; exact numbers |
+| 70-89 | 3-4 per 500 words; most claims sourced |
+| 50-69 | 1-2 per 500 words |
+| 30-49 | <1 per 500 words |
+| 0-29 | No statistics; all quantifiers vague ("many", "most") |
+
+Counts: percentages, dollar amounts, timeframes, named studies, specific counts.
+Does NOT count: "many", "a significant percentage", "studies show" (unsourced).
+
+**Category 5 — Uniqueness & Original Data (10%).** Information AI can't get
+elsewhere.
+
+| Score | Criteria |
+|---|---|
+| 90-100 | First-party research, proprietary data, original surveys/datasets |
+| 70-89 | Some original insight or unique analysis |
+| 50-69 | Mostly synthesis with some unique commentary |
+| 30-49 | Largely derivative |
+| 0-29 | Entirely derivative |
+
+**Block Citability Score** = Answer×0.30 + SelfContain×0.25 + Structure×0.20 +
+Stats×0.15 + Unique×0.10.
+
+## Scoring procedure
+
+1. For each block in the script's output, score the five categories and compute
+   the block score.
+2. **Page citability score** = average of all block scores.
+3. **Citability coverage** = % of blocks scoring above 70.
+4. Identify the top 3 strongest blocks and the bottom 3 (rewrite priority).
+5. For each block below 60, write a concrete rewrite: a new answer-first opening
+   sentence, specific statistics/facts to add, and structural fixes.
+
+## Output format
+
+Produce `GEO-CITABILITY-SCORE.md`:
+
+```markdown
+# AI Citability Analysis: [Page Title]
+
+**URL:** [URL] · **Date:** [Date]
+**Overall Citability Score: [X]/100**
+**Citability Coverage:** [X]% of blocks score above 70
+
+## Score Summary
+| Category | Score | Weight | Weighted |
+|---|---|---|---|
+| Answer Block Quality | [X] | 30% | [X] |
+| Passage Self-Containment | [X] | 25% | [X] |
+| Structural Readability | [X] | 20% | [X] |
+| Statistical Density | [X] | 15% | [X] |
+| Uniqueness & Original Data | [X] | 10% | [X] |
+| **Overall** | | | **[X]/100** |
+
+## Strongest Content Blocks
+[top 3 — heading, score, why it works]
+
+## Weakest Content Blocks (Rewrite Priority)
+[bottom 3 — heading, score, current opening, problem, suggested rewrite]
+
+## Quick Win Recommendations
+[5 specific changes, each with expected citability lift]
+
+## Per-Section Scores
+[table: heading, words, the five sub-scores, overall]
+```
+
+## Reference data
+
+- Optimal AI-citation passage length: **134-167 words**.
+- Definition patterns increase citation rate ~**2.1×**.
+- Adding statistics increases citation ~**40%**; authority quotations up to
+  **+115%** in some categories.
+- ChatGPT Search: favors explicit definitions, named sources, recent dates.
+  Perplexity: favors fact-dense passages, values recency. Gemini AI Overviews:
+  favors concise 40-60-word answer blocks.
+
+## Output
+
+The script prints the page's **block breakdown to stdout** — that is your input
+for scoring. It also writes `GEO-CITABILITY-EXTRACT.md` and `.json` to
+`~/Documents/synergyAI/outputs/` (`/outputs/` in Pyodide). You write the final
+`GEO-CITABILITY-SCORE.md` from your scoring.
+
+## Pyodide notes
+
+The script routes the page fetch through `/gpt/backend/api/v1/fetch-url` under
+Pyodide and uses `urllib` under native CPython. `fetches_urls: false` because
+the script fetches on its own.
+
+## Limitations
+
+- **JavaScript-rendered content is invisible.** The script reads raw HTML; an
+  SPA without SSR extracts as nearly empty — say so rather than scoring 0.
+- **Block segmentation is heading-based.** A page with no H2/H3 returns as one
+  block; note that the page needs structural headings.

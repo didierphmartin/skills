@@ -1,0 +1,29 @@
+{
+  "patch": {
+    "reasoning": "Two primary body deficiencies: (1) the mandatory script-call instruction triggers only on a specific phrase, causing the LLM to skip the tool for many rephrasings of citability requests (failure patterns 1-6,8,10). I'll broaden the trigger language to cover all variations. (2) The URL scheme requirement is not explicitly stated, leading to the assistant stripping the scheme (pattern 7). I'll add an explicit scheme mandate to the invocation section.",
+    "edits": [
+      {
+        "op": "replace",
+        "target": "When the user asks how citable / quotable a page is, your **first action** is\n`run_skill_script` with `dir_name: geo-citability` and\n`scripts/citability_parse.py`. The script fetches the page and segments it\ninto content blocks with exact word counts. Score from that \u2014 never from a\npage you imagine.",
+        "content": "For any request involving scoring, checking, comparing, or improving the\ncitability or quotability of a web page, your **first and only initial\naction** is `run_skill_script` with `dir_name: geo-citability` and\n`scripts/citability_parse.py`. The script fetches the page and segments it\ninto content blocks with exact word counts. Do **not** output any analysis\nor citability assessment until you have received the script's output.\nScore from that \u2014 never from a page you imagine."
+      },
+      {
+        "op": "replace",
+        "target": "The URL must be the sole element in the `argv` array \u2014 never pass it as `--url` or any other named argument.",
+        "content": "The URL must include the scheme (http:// or https://) and be the sole element in the `argv` array \u2014 never pass it as `--url` or any other named argument."
+      }
+    ]
+  },
+  "applied": 1,
+  "skipped": [
+    {
+      "edit": {
+        "op": "replace",
+        "target": "When the user asks how citable / quotable a page is, your **first action** is\n`run_skill_script` with `dir_name: geo-citability` and\n`scripts/citability_parse.py`. The script fetches the page and segments it\ninto content blocks with exact word counts. Score from that \u2014 never from a\npage you imagine.",
+        "content": "For any request involving scoring, checking, comparing, or improving the\ncitability or quotability of a web page, your **first and only initial\naction** is `run_skill_script` with `dir_name: geo-citability` and\n`scripts/citability_parse.py`. The script fetches the page and segments it\ninto content blocks with exact word counts. Do **not** output any analysis\nor citability assessment until you have received the script's output.\nScore from that \u2014 never from a page you imagine."
+      },
+      "reason": "replace: target not found"
+    }
+  ],
+  "reasoning": "Two primary body deficiencies: (1) the mandatory script-call instruction triggers only on a specific phrase, causing the LLM to skip the tool for many rephrasings of citability requests (failure patterns 1-6,8,10). I'll broaden the trigger language to cover all variations. (2) The URL scheme requirement is not explicitly stated, leading to the assistant stripping the scheme (pattern 7). I'll add an explicit scheme mandate to the invocation section."
+}

@@ -1,0 +1,20 @@
+{
+  "patch": {
+    "reasoning": "Failure #1 shows the assistant didn't warn about empty SPA results before calling the script. Failure #4 shows the assistant violated scope by answering a restaurant recommendation question (out-of-scope trigger). The body needs a pre-call expectation-setting step for JS-heavy pages, and a clearer statement that restaurant/business recommendations are out of scope. I'll add a procedural note about setting expectations when URLs suggest SPAs, and strengthen the Limitations section to explicitly reject local business queries.",
+    "edits": [
+      {
+        "op": "insert_after",
+        "target": "> When the user asks how citable / quotable a page is, your **first action** is\n> `run_skill_script` with `dir_name: geo-citability` and\n> `scripts/citability_parse.py`. The script fetches the page and segments it\n> into content blocks with exact word counts. Score from that \u2014 never from a\n> page you imagine.",
+        "content": ">\n> **Before calling the script:** If the URL or user description suggests a single-page app (SPA) or JavaScript-heavy site, warn that the extraction may be empty and offer to proceed anyway."
+      },
+      {
+        "op": "replace",
+        "target": "## Limitations\n\n- **JavaScript-rendered content is invisible.** The script reads raw HTML; an\n  SPA without SSR extracts as nearly empty \u2014 say so rather than scoring 0.\n- **Block segmentation is heading-based.** A page with no H2/H3 returns as one\n  block; note that the page needs structural headings.",
+        "content": "## Limitations\n\n- **JavaScript-rendered content is invisible.** The script reads raw HTML; an\n  SPA without SSR extracts as nearly empty \u2014 say so rather than scoring 0.\n- **Block segmentation is heading-based.** A page with no H2/H3 returns as one\n  block; note that the page needs structural headings.\n- **Out of scope:** Local business recommendations (\"best restaurant near me\"), general SEO audits without citability focus, and requests that don't involve analyzing a specific page's AI citation potential."
+      }
+    ]
+  },
+  "applied": 2,
+  "skipped": [],
+  "reasoning": "Failure #1 shows the assistant didn't warn about empty SPA results before calling the script. Failure #4 shows the assistant violated scope by answering a restaurant recommendation question (out-of-scope trigger). The body needs a pre-call expectation-setting step for JS-heavy pages, and a clearer statement that restaurant/business recommendations are out of scope. I'll add a procedural note about setting expectations when URLs suggest SPAs, and strengthen the Limitations section to explicitly reject local business queries."
+}

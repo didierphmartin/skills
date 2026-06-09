@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Simplified Workflow Language",
+  "description": "Compact JSON form for authoring workflows. Compiled into the full Workflow DSL by scripts/compile.py.",
+  "type": "object",
+  "required": ["name", "start", "agents", "flow"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Workflow display name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional one-line description of what the workflow produces."
+    },
+    "start": {
+      "type": "object",
+      "required": ["prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The user-facing prompt that kicks off the workflow."
+        },
+        "documents": {
+          "type": "array",
+          "description": "Optional list of documents to pass in at start. Each item is either a path string OR a full document object as produced by the editor's upload step (id, name, path, mimeType, etc.). Pass-through to the DSL — the compiler does not normalize.",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "object" }
+            ]
+          },
+          "default": []
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/agent" }
+    },
+    "flow": {
+      "type": "array",
+      "description": "Directed edges between nodes. Reserved ids 'start' and 'output' bracket the graph.",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "definitions": {
+    "agent": {
+      "type": "object",
+      "required": ["id", "name", "provider", "instructions"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Local identifier referenced by flow edges. Must not be 'start' or 'output'."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Display name shown in the editor."
+        },
+        "description": {
+          "type": "string",
+          "description": "Short description of what the agent does."
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "openai", "anthropic", "kimi", "grok", "deepseek", "gemini"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "description": "Optional provider-specific model id. Empty string lets the engine pick the default."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MCP tool names the agent can call.",
+          "default": []
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "description": "System prompt — role, persona, scope, hard constraints."
+        },
+        "skill": {
+          "type": "string",
+          "description": "Optional procedure / output-format guidance. Maps to DSL field skill_content."
+        },
+        "agent_template_id": {
+          "type": ["integer", "null"],
+          "description": "Optional template id from the agent registry to bind to."
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4096
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 0.7
+        },
+        "output_schema_id": {
+          "type": ["integer", "null"],
+          "description": "Optional reference to a structured-output schema."
+        },
+        "skill_binding": {
+          "description": "Optional binding to a folder-backed skill (e.g. 'medium-format', 'html', 'docx'). String form is just the skill's dir_name; the compiler expands it to {id, name, source: 'local', dir_name}. Use the object form when you need a non-local source. Different from 'skill' (inline procedure text).",
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string", "minLength": 1 },
+                "source": { "type": "string", "default": "local" },
+                "dir_name": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

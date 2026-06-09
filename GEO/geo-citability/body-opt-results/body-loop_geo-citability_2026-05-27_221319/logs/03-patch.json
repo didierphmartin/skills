@@ -1,0 +1,15 @@
+{
+  "patch": {
+    "reasoning": "Failure #2 and #4 are description-side (wrong triggers). Failure #1 was addressed in iteration 1. Failure #3 persists: the assistant calls the script but doesn't apply the rubric. Iteration 2's insert was rejected for causing a regression. The root issue: the rubric instruction is still disconnected from the scoring procedure. The scoring procedure section (line ~140) tells the LLM to 'score the five categories' but doesn't repeat the mandate to use the rubric table. A surgical fix: in the 'Scoring procedure' section, explicitly reference the rubric before step 1. This ensures the rubric is invoked at the moment of scoring, not just during initial reading.",
+    "edits": [
+      {
+        "op": "replace",
+        "target": "## Scoring procedure\n\n1. For each block in the script's output, score the five categories and compute\n   the block score.",
+        "content": "## Scoring procedure\n\n**Use the Citability Scoring Rubric above** \u2014 score every block against the five categories (Answer Block Quality 30%, Self-Containment 25%, Structural Readability 20%, Statistical Density 15%, Uniqueness 10%).\n\n1. For each block in the script's output, score the five categories and compute\n   the block score."
+      }
+    ]
+  },
+  "applied": 1,
+  "skipped": [],
+  "reasoning": "Failure #2 and #4 are description-side (wrong triggers). Failure #1 was addressed in iteration 1. Failure #3 persists: the assistant calls the script but doesn't apply the rubric. Iteration 2's insert was rejected for causing a regression. The root issue: the rubric instruction is still disconnected from the scoring procedure. The scoring procedure section (line ~140) tells the LLM to 'score the five categories' but doesn't repeat the mandate to use the rubric table. A surgical fix: in the 'Scoring procedure' section, explicitly reference the rubric before step 1. This ensures the rubric is invoked at the moment of scoring, not just during initial reading."
+}

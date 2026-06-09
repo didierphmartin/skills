@@ -1,0 +1,20 @@
+{
+  "patch": {
+    "reasoning": "Failure #1 shows we need to set expectations about JS-rendered pages BEFORE the script call, not after. Failure #3 reveals the rubric is buried mid-document\u2014users see the tool call requirement but miss the scoring criteria. Moving the rubric reference into the top 'REQUIRED FIRST STEP' block ensures it's seen alongside the tool invocation requirement. These two surgical edits address the root causes without sweeping rewrites.",
+    "edits": [
+      {
+        "op": "replace",
+        "target": "> When the user asks how citable / quotable a page is, your **first action** is\n> `run_skill_script` with `dir_name: geo-citability` and\n> `scripts/citability_parse.py`. The script fetches the page and segments it\n> into content blocks with exact word counts. Score from that \u2014 never from a\n> page you imagine.",
+        "content": "> When the user asks how citable / quotable a page is, your **first action** is\n> `run_skill_script` with `dir_name: geo-citability` and\n> `scripts/citability_parse.py`. The script fetches the page and segments it\n> into content blocks with exact word counts. **Note:** JavaScript-rendered\n> pages (SPAs without SSR) may extract as nearly empty\u2014if the script reports\n> minimal content, explain this limitation rather than scoring zero. Score from\n> the script's output using the **5-category rubric below** (Answer Block\n> Quality 30%, Self-Containment 25%, Structural Readability 20%, Statistical\n> Density 15%, Uniqueness 10%)\u2014never from a page you imagine."
+      },
+      {
+        "op": "replace",
+        "target": "## Citability Scoring Rubric (0-100)\n\nScore every block on five categories, then weight them.",
+        "content": "## Citability Scoring Rubric (0-100)\n\n**Always apply this rubric** when scoring blocks\u2014these five categories and\nweights are mandatory for every citability analysis.\n\nScore every block on five categories, then weight them."
+      }
+    ]
+  },
+  "applied": 2,
+  "skipped": [],
+  "reasoning": "Failure #1 shows we need to set expectations about JS-rendered pages BEFORE the script call, not after. Failure #3 reveals the rubric is buried mid-document\u2014users see the tool call requirement but miss the scoring criteria. Moving the rubric reference into the top 'REQUIRED FIRST STEP' block ensures it's seen alongside the tool invocation requirement. These two surgical edits address the root causes without sweeping rewrites."
+}

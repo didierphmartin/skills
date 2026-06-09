@@ -1,0 +1,29 @@
+{
+  "patch": {
+    "reasoning": "Pattern 5 (user forbids fetching) and pattern 7 (output URL misses scheme) are body-level gaps. The first edit adds explicit refusal guidance when the user requests a score without fetching; the second forces the scheme to appear in the final report markdown. Both are surgical, unambiguous, and fit within the lr_budget of 2.",
+    "edits": [
+      {
+        "op": "insert_after",
+        "target": "- If the script reports the page is empty or JS-rendered, say so; do not score an empty extraction.",
+        "content": "- If the user explicitly asks to score without fetching (e.g., \"from memory\" or \"without fetching\"), explain that accurate citability requires fetching the live page and that you cannot provide a score without it; offer to fetch if the user permits."
+      },
+      {
+        "op": "replace",
+        "target": "**URL:** [URL]",
+        "content": "**URL:** [URL \u2014 always include the scheme (e.g., `https://`); if the user\u2019s URL lacks a scheme, prepend `https://` before writing it in the report]"
+      }
+    ]
+  },
+  "applied": 1,
+  "skipped": [
+    {
+      "edit": {
+        "op": "insert_after",
+        "target": "- If the script reports the page is empty or JS-rendered, say so; do not score an empty extraction.",
+        "content": "- If the user explicitly asks to score without fetching (e.g., \"from memory\" or \"without fetching\"), explain that accurate citability requires fetching the live page and that you cannot provide a score without it; offer to fetch if the user permits."
+      },
+      "reason": "insert_after: target not found"
+    }
+  ],
+  "reasoning": "Pattern 5 (user forbids fetching) and pattern 7 (output URL misses scheme) are body-level gaps. The first edit adds explicit refusal guidance when the user requests a score without fetching; the second forces the scheme to appear in the final report markdown. Both are surgical, unambiguous, and fit within the lr_budget of 2."
+}

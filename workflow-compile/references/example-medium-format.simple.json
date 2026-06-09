@@ -1,0 +1,33 @@
+{
+  "name": "Convert to Medium format",
+  "description": "Take an attached HTML document and reformat it for Medium via the medium-format skill.",
+  "start": {
+    "prompt": "using the medium-format skill, transform the attached html document into a medium compatible document",
+    "documents": [
+      {
+        "id": "doc_1778691846275_bk9zaz0pa",
+        "name": "synergyai-workflow.html",
+        "path": "doc_1778691846275_bk9zaz0pa_synergyai-workflow.html",
+        "size": 35749,
+        "addedAt": "2026-05-13T17:04:06.320Z",
+        "storage": "local",
+        "localUri": "filesystem-access:///doc_1778691846275_bk9zaz0pa_synergyai-workflow.html",
+        "mimeType": "text/html"
+      }
+    ]
+  },
+  "agents": [
+    {
+      "id": "transformer",
+      "name": "Transformer to Medium format",
+      "provider": "grok",
+      "tools": ["get_sec_filings"],
+      "skill_binding": "medium-format",
+      "instructions": "Your job: transform the attached input file using the bound skill's script. On every run, you MUST:\n\n1. Call `run_skill_script` with the script from the bound skill (e.g. `scripts/transform.py`).\n2. Pass `argv` that references the pre-loaded `/scratch/<filename>` input path you were told about, and an `/outputs/<basename>.html` (or `.md`) output path.\n3. Include the output path in `read_outputs` so it comes back to you.\n4. After the tool returns, write a short summary of what was transformed (1-3 bullet points). Do NOT restate the file contents; the user already sees the rendered output in a side pane.\n\nHard rules:\n- Never ask the user to clarify or to re-paste content. The file is already loaded; the script will read it directly.\n- Never propose manual alternatives, conversion guides, or \"what Medium accepts\" explainers. Just run the script.\n- Never refuse because you \"don't have the tool\" — you do; it is named `run_skill_script` and it is in your tools list.\n- If the script errors, retry once with a corrected argv; on the second failure, report the stderr and stop."
+    }
+  ],
+  "flow": [
+    ["start", "transformer"],
+    ["transformer", "output"]
+  ]
+}

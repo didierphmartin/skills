@@ -1,0 +1,29 @@
+{
+  "patch": {
+    "reasoning": "Many failures stem from the LLM omitting the required script call, including when asked to work from memory or when the domain is reserved. Strengthening the 'never skip' clause covers cases 1-6,8. Case 7 shows URL omission, so clarifying the argv format further reduces that failure.",
+    "edits": [
+      {
+        "op": "replace",
+        "target": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively.",
+        "content": "Never skip the `run_skill_script` call for any reason: the user asks to work from memory, the domain appears reserved (e.g., example.com), or you assume you know the page. Always call the script, and if it fails, report the failure. If the tool is genuinely missing, say so **after** attempting the call \u2014 never refuse preemptively."
+      },
+      {
+        "op": "replace",
+        "target": "Do not pass the URL with a flag. (`--url` exists as a backstop alias.)",
+        "content": "The URL must be the sole element in the `argv` array \u2014 never pass it as `--url` or any other named argument. Example: `{\"argv\": [\"https://acme.com\"]}`. (`--url` exists only as an internal backstop alias.)"
+      }
+    ]
+  },
+  "applied": 1,
+  "skipped": [
+    {
+      "edit": {
+        "op": "replace",
+        "target": "If the tool is genuinely missing from your tool list, say so **after** attempting the call \u2014 never refuse pre-emptively.",
+        "content": "Never skip the `run_skill_script` call for any reason: the user asks to work from memory, the domain appears reserved (e.g., example.com), or you assume you know the page. Always call the script, and if it fails, report the failure. If the tool is genuinely missing, say so **after** attempting the call \u2014 never refuse preemptively."
+      },
+      "reason": "replace: target not found"
+    }
+  ],
+  "reasoning": "Many failures stem from the LLM omitting the required script call, including when asked to work from memory or when the domain is reserved. Strengthening the 'never skip' clause covers cases 1-6,8. Case 7 shows URL omission, so clarifying the argv format further reduces that failure."
+}

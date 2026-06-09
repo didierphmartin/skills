@@ -1,0 +1,15 @@
+{
+  "patch": {
+    "reasoning": "Failure #2 (user asks to skip the script) and #4 (wrong skill triggered) are description-side issues\u2014body edits cannot fix trigger logic. Failure #1 was addressed in iteration 1 by adding JS-rendered expectations. Failure #3 shows the rubric reference was added to the top block in iteration 1, but the assistant still failed to apply it. The root cause: the rubric is 50+ lines below the invocation block, and the iteration-1 edit only added a parenthetical mention of category names without making the rubric unmissable. A surgical fix: immediately after the tool invocation requirement, insert a direct pointer to the rubric section with the explicit instruction to read it before scoring. This keeps the edit atomic and ensures the rubric is encountered in the required reading flow.",
+    "edits": [
+      {
+        "op": "insert_after",
+        "target": "> If the tool is genuinely missing from your tool list, say so **after**\n> attempting the call \u2014 never refuse pre-emptively.",
+        "content": ">\n> **Before scoring**, read the **Citability Scoring Rubric** section below\u2014it\n> defines the mandatory 5-category framework (Answer Block Quality 30%,\n> Self-Containment 25%, Structural Readability 20%, Statistical Density 15%,\n> Uniqueness 10%) that you must apply to every block."
+      }
+    ]
+  },
+  "applied": 1,
+  "skipped": [],
+  "reasoning": "Failure #2 (user asks to skip the script) and #4 (wrong skill triggered) are description-side issues\u2014body edits cannot fix trigger logic. Failure #1 was addressed in iteration 1 by adding JS-rendered expectations. Failure #3 shows the rubric reference was added to the top block in iteration 1, but the assistant still failed to apply it. The root cause: the rubric is 50+ lines below the invocation block, and the iteration-1 edit only added a parenthetical mention of category names without making the rubric unmissable. A surgical fix: immediately after the tool invocation requirement, insert a direct pointer to the rubric section with the explicit instruction to read it before scoring. This keeps the edit atomic and ensures the rubric is encountered in the required reading flow."
+}

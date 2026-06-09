@@ -1,0 +1,229 @@
+{
+  "skill_name": "geo-citability",
+  "description": "Score how likely AI systems (ChatGPT, Claude, Perplexity, Gemini) are to cite or quote a web page, and produce specific rewrite suggestions. Use for: 'citability score', 'will AI cite my page', 'is my content quotable by AI', 'GEO content score', 'make my page more citable', 'AI citation readiness', 'why doesn't ChatGPT cite my article', 'optimize content for AI answers'. Pipeline: fetch the page -> strip nav/header/footer -> segment into content blocks at each H2/H3 -> per block compute exact word count, paragraph/list/table counts and statistic density -> emit the structured page breakdown. The LLM then scores each block against the 5-category citability rubric (answer-block quality, passage self-containment, structural readability, statistical density, uniqueness & original data) for a 0-100 page score with prioritized rewrite suggestions. Deterministic extraction and word counts come from the script; the qualitative scoring is the LLM's.",
+  "soft_threshold": 4,
+  "results": [
+    {
+      "query": "Can you tell me how citable my blog post at https://example.com/blog/how-ai-search-works is by AI search engines?",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 5,
+      "soft_per_expectation": [
+        {
+          "text": "First action must be a `run_skill_script` tool call for the geo-citability skill, not a textual reply",
+          "passed": true,
+          "evidence": "The transcript shows [tool_call] name=run_skill_script as the first action, before any assistant text response"
+        },
+        {
+          "text": "The tool call must target `scripts/citability_parse.py`",
+          "passed": true,
+          "evidence": "The tool call shows script='scripts/citability_parse.py' in the input parameters"
+        },
+        {
+          "text": "The URL `https://example.com/blog/how-ai-search-works` must appear as a POSITIONAL argv entry, not behind a `--url` flag",
+          "passed": true,
+          "evidence": "The argv parameter shows ['https://example.com/blog/how-ai-search-works'] as a positional argument without any flag prefix"
+        }
+      ],
+      "soft_reasoning": "All three expectations were met perfectly: correct tool call ordering, correct script target, and correct positional argument format.",
+      "overall_pass": true,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-a781803c\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://example.com/blog/how-ai-search-works\"], \"read_outputs\": [\"/outputs/citability_report.json\"]}\n\n[assistant_text] I'll analyze the citability of your blog post for AI search engines like ChatGPT, Claude, Perplexity, and Gemini. Let me fetch and score the content."
+    },
+    {
+      "query": "Score this page for AI citability: https://my-startup.io/docs/getting-started",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 5,
+      "soft_per_expectation": [
+        {
+          "text": "Must use the geo-citability skill, not respond with a hand-written analysis",
+          "passed": true,
+          "evidence": "The response uses tool_call with name=run_skill_script and dir_name=geo-citability-bodyeval-a0ffd1ff, which is the geo-citability skill"
+        },
+        {
+          "text": "Argv shape must be a positional URL",
+          "passed": true,
+          "evidence": "The argv field shows ['https://my-startup.io/docs/getting-started', '--source', 'https://my-startup.io/docs/getting-started'] where the URL is passed as the first positional argument"
+        }
+      ],
+      "soft_reasoning": "All expectations met: the geo-citability skill was used correctly with the URL as a positional argument.",
+      "overall_pass": true,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-a0ffd1ff\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://my-startup.io/docs/getting-started\", \"--source\", \"https://my-startup.io/docs/getting-started\"]}\n\n[assistant_text] I'll audit your documentation page for AI citability, analyzing how likely systems like ChatGPT, Claude, Perplexity, and Gemini are to cite or quote it."
+    },
+    {
+      "query": "Will Perplexity quote my article at https://news.example.org/2026/05/ai-overviews ?",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 5,
+      "soft_per_expectation": [
+        {
+          "text": "First action is the script call, not an opinion",
+          "passed": true,
+          "evidence": "The transcript shows '[tool_call] name=run_skill_script...' as the very first action, before any assistant text or opinion is provided."
+        },
+        {
+          "text": "Skill must run before the LLM forms a verdict",
+          "passed": true,
+          "evidence": "The tool_call appears first in the transcript, followed by assistant_text that states 'I'll audit your article' and 'Let me fetch and analyze', indicating the skill execution happens before forming conclusions."
+        }
+      ],
+      "soft_reasoning": "Both expectations are fully met with the skill being called immediately before any analysis or opinion is formed.",
+      "overall_pass": true,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-3395017f\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://news.example.org/2026/05/ai-overviews\", \"--source\", \"https://news.example.org/2026/05/ai-overviews\"], \"read_outputs\": [\"/outputs/citability_report.json\"]}\n\n[assistant_text] I'll audit your article to determine how likely Perplexity and other AI search engines (ChatGPT, Claude, Gemini) are to cite it. Let me fetch and analyze the page structure, content blocks, and citability factors."
+    },
+    {
+      "query": "Check the citability of https://example.com/empty-spa \u2014 it's a JS-rendered single-page app.",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 3,
+      "soft_per_expectation": [
+        {
+          "text": "Must still call the script \u2014 do NOT pre-emptively refuse because the page is an SPA",
+          "passed": true,
+          "evidence": "The transcript shows the tool was called: [tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-01804ccc\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://example.com/empty-spa\"]"
+        },
+        {
+          "text": "Plan must acknowledge that an empty extraction will be reported as such",
+          "passed": false,
+          "evidence": "The assistant's response 'I'll analyze the citability of your JS-rendered single-page app for AI search engines like ChatGPT, Claude, Perplexity, and Gemini.' does not acknowledge that an empty extraction will be reported. It simply states it will analyze the citability without mentioning the possibility or expectation of an empty result."
+        }
+      ],
+      "soft_reasoning": "The assistant correctly called the script without refusing, but failed to acknowledge that an empty extraction would be reported for the SPA.",
+      "overall_pass": false,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-01804ccc\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://example.com/empty-spa\"], \"read_outputs\": [\"/outputs/citability_report.json\"]}\n\n[assistant_text] I'll analyze the citability of your JS-rendered single-page app for AI search engines like ChatGPT, Claude, Perplexity, and Gemini."
+    },
+    {
+      "query": "Without fetching anything, just tell me from memory what the citability score of https://en.wikipedia.org/wiki/Generative_engine_optimization would be.",
+      "skipped": false,
+      "hard_pass": false,
+      "hard_failures": [
+        "missing required: 'citability_parse|run_skill_script'"
+      ],
+      "soft_score": 1,
+      "soft_per_expectation": [
+        {
+          "text": "Must REFUSE to score from memory and call the script instead",
+          "passed": false,
+          "evidence": "The assistant provided a detailed estimate ('I would estimate the Wikipedia article on Generative Engine Optimization would score **very high - likely in the 80-90 range**' and 'Estimated Score: 82-88/100') without refusing or calling any script. It proceeded to analyze all five categories from memory."
+        },
+        {
+          "text": "Plan must include the script call or state that scoring requires the script's blocks",
+          "passed": false,
+          "evidence": "No plan was presented, and no mention was made of needing to call a script or that scoring requires the script's blocks. The response went straight into providing a score estimate from memory."
+        }
+      ],
+      "soft_reasoning": "The assistant completely failed both expectations by providing a detailed score estimate from memory instead of refusing and calling the required script.",
+      "overall_pass": false,
+      "transcript": "[assistant_text] Based on my understanding of the citability scoring rubric (0-100 scale), I would estimate the Wikipedia article on Generative Engine Optimization would score **very high - likely in the 80-90 range**. Here's my reasoning across the five categories:\n\n## 1. **Answer-Block Quality** (High)\n- Wikipedia articles are structured to provide direct, factual answers\n- The GEO article would define the concept clearly in the opening paragraph\n- Contains specific, quotable definitions and explanations\n- Well-organized sections that directly address \"what,\" \"why,\" and \"how\" questions\n\n## 2. **Passage Self-Containment** (Very High)\n- Wikipedia's editorial style ensures each section can stand alone\n- Key context is repeated when needed (e.g., \"Generative Engine Optimization (GEO) is...\")\n- Minimal reliance on \"as mentioned above\" or forward references\n- Each paragraph typically includes enough context to be quoted independently\n\n## 3. **Structural Readability** (Very High)\n- Clear H2/H3 hierarchy with descriptive headings\n- Short, scannable paragraphs\n- Bullet lists for key points\n- Info boxes and summary tables\n- Clean HTML markup with semantic structure\n\n## 4. **Statistical Density** (Medium-High)\n- Wikipedia typically includes citations, dates, and some quantitative data\n- May have specific examples, case studies, or research findings\n- References section adds credibility\n- However, might lack the depth of statistics found in research papers or industry reports\n\n## 5. **Uniqueness & Original Data** (Medium)\n- Wikipedia synthesizes existing sources rather than creating original research\n- However, the comprehensive synthesis itself has value\n- The article might be the most authoritative single source on GEO\n- Strong editorial oversight ensures accuracy\n\n**Estimated Score: 82-88/100**\n\nThe main limitation would be that Wikipedia doesn't contain original research or proprietary data, which would prevent it from reaching the highest tier (90+). But its structural excellence, self-contained passages, and authoritative synthesis make it highly citable by AI systems."
+    },
+    {
+      "query": "Compare citability of https://a.example.com/post and https://b.example.com/post \u2014 which one is more likely to be cited?",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 5,
+      "soft_per_expectation": [
+        {
+          "text": "Plan must call the script twice (once per URL)",
+          "passed": true,
+          "evidence": "The transcript shows two tool calls: one for 'https://a.example.com/post' and another for 'https://b.example.com/post', both using the citability_parse.py script."
+        },
+        {
+          "text": "Must not invent a comparison from imagined page content",
+          "passed": true,
+          "evidence": "The assistant states it 'will analyze both URLs to compare their citability scores' but does not provide any invented comparison or imagined page content. The response stops after calling the tools without fabricating any citability metrics or content analysis."
+        }
+      ],
+      "soft_reasoning": "The response correctly calls the citability script twice (once per URL) and refrains from inventing comparisons without actual data.",
+      "overall_pass": true,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-a27b813b\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://a.example.com/post\", \"--source\", \"https://a.example.com/post\"], \"read_outputs\": [\"/outputs/citability_report.json\"]}\n\n[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-a27b813b\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://b.example.com/post\", \"--source\", \"https://b.example.com/post\"], \"read_outputs\": [\"/outputs/citability_report_b.json\"]}\n\n[assistant_text] I'll analyze both URLs to compare their citability scores and determine which is more likely to be cited by AI systems like ChatGPT, Claude, Perplexity, and Gemini."
+    },
+    {
+      "query": "How citable is my homepage https://acme.com ?",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 5,
+      "soft_per_expectation": [
+        {
+          "text": "Argv must include the scheme; do not strip to bare hostname",
+          "passed": true,
+          "evidence": "The tool_call shows argv: ['https://acme.com'] which includes the full URL with the https:// scheme intact, not just 'acme.com'"
+        }
+      ],
+      "soft_reasoning": "The LLM correctly passed the full URL with scheme to the tool, meeting the single expectation perfectly.",
+      "overall_pass": true,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-1d3d87af\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://acme.com\"], \"read_outputs\": []}\n\n[assistant_text] I'll audit your homepage at https://acme.com for AI citability using the GEO citability scoring framework. This will analyze how likely AI systems like ChatGPT, Claude, Perplexity, and Gemini are to cite or quote your page."
+    },
+    {
+      "query": "I want to make my page at https://blog.example.com/seo-vs-geo more quotable by ChatGPT. Give me a citability score and concrete rewrites.",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 2,
+      "soft_per_expectation": [
+        {
+          "text": "Plan must establish script call first, rewrites second",
+          "passed": true,
+          "evidence": "The transcript shows the assistant first calls the tool 'run_skill_script' with the citability_parse.py script, then states 'I'll audit your page for AI citability and provide a detailed score with specific rewrite suggestions' - establishing the order of script execution followed by analysis/rewrites."
+        },
+        {
+          "text": "Plan must reference the 5-category rubric, not invent one",
+          "passed": false,
+          "evidence": "The assistant's response does not mention or reference any 5-category rubric. It only states it will 'provide a detailed score with specific rewrite suggestions' without specifying what rubric or categories will be used for evaluation."
+        }
+      ],
+      "soft_reasoning": "The assistant correctly sequences the script execution before analysis but fails to reference the required 5-category rubric for evaluation.",
+      "overall_pass": false,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-56a1a483\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://blog.example.com/seo-vs-geo\", \"--output\", \"/outputs/citability_report.json\"], \"read_outputs\": [\"/outputs/citability_report.json\"]}\n\n[assistant_text] I'll audit your page for AI citability and provide a detailed score with specific rewrite suggestions."
+    },
+    {
+      "query": "What's the best Italian restaurant near me?",
+      "skipped": false,
+      "hard_pass": true,
+      "hard_failures": [],
+      "soft_score": 5,
+      "soft_per_expectation": [
+        {
+          "text": "Must NOT trigger geo-citability \u2014 unrelated to AI-citability scoring",
+          "passed": true,
+          "evidence": "The response provides restaurant recommendations with specific locations, ratings, and addresses. While it contains geographic information (addresses, city names like McMasterville, Saint-Basile-le-Grand), there is no indication that this triggers 'geo-citability' as a problematic issue. The expectation states this is 'unrelated to AI-citability scoring,' suggesting geo-citability is a separate concern that should not be triggered. The response appears to be a straightforward local business recommendation without any citability issues."
+        }
+      ],
+      "soft_reasoning": "The response meets the single expectation by providing restaurant recommendations without triggering geo-citability concerns.",
+      "overall_pass": true,
+      "transcript": "[assistant_text] Based on the search results near you in Saint-Basile-le-Grand, here are the **top Italian restaurants** with the highest ratings:\n\n## \ud83c\udfc6 Best Rated:\n\n1. **Lena Pasta** \u2b50 5.0 (121 reviews)\n   - 165 Bd Laurier, McMasterville\n   - Perfect rating! Family restaurant with pasta specialties\n\n2. **Brussco** \u2b50 4.8 (203 reviews)\n   - 781 Bd Laurier, McMasterville\n   - Highly rated Italian restaurant nearby\n\n3. **Restaurant Rosa Bella** \u2b50 4.7 (185 reviews)\n   - 1515 Pl. de l'H\u00f4tel de Ville, Saint-Bruno-de-Montarville\n   - Excellent Italian dining experience\n\n4. **Pizza Gino 2 pour 1** \u2b50 4.7 (190 reviews)\n   - 191 Blvd. Sir-Wilfrid-Laurier, Saint-Basile-le-Grand\n   - Right in your town! Great pizza option\n\n## \ud83c\udf5d Popular Choice:\n\n**Angela & i - Restaurant - Bar - Terrasse** \u2b50 4.5 (938 reviews)\n- 320 Rue Murano, Sainte-Julie\n- Very popular with nearly 1,000 reviews, features a terrace\n\nBased on ratings alone, **Lena Pasta** (perfect 5.0) or **Brussco** (4.8) would be your best bets for an exceptional Italian meal. Both are in McMasterville, just a short drive away. If you want something excellent right in Saint-Basile-le-Grand, **Pizza Gino** is highly rated at 4.7.\n\nWould you like directions to any of these restaurants?"
+    },
+    {
+      "query": "Run my SEO audit on https://example.com.",
+      "skipped": false,
+      "hard_pass": false,
+      "hard_failures": [
+        "forbidden pattern present: 'citability_parse'"
+      ],
+      "soft_score": 1,
+      "soft_per_expectation": [
+        {
+          "text": "Must NOT trigger geo-citability \u2014 generic SEO audit is the wrong skill",
+          "passed": false,
+          "evidence": "The transcript shows the system called 'run_skill_script' with dir_name='geo-citability-bodyeval-92cf7dcc' and script='scripts/citability_parse.py', which is clearly the geo-citability skill. The assistant also explicitly states 'I'll run an AI citability audit' rather than a generic SEO audit."
+        }
+      ],
+      "soft_reasoning": "The system incorrectly triggered the geo-citability skill when the user requested a generic SEO audit, which is a fundamental routing error.",
+      "overall_pass": false,
+      "transcript": "[tool_call] name=run_skill_script input={\"dir_name\": \"geo-citability-bodyeval-92cf7dcc\", \"script\": \"scripts/citability_parse.py\", \"argv\": [\"https://example.com\", \"-o\", \"/outputs/example_com_citability_report.json\"], \"read_outputs\": [\"/outputs/example_com_citability_report.json\"]}\n\n[assistant_text] I'll run an AI citability audit on https://example.com for you. This will analyze how likely AI systems like ChatGPT, Claude, Perplexity, and Gemini are to cite or quote content from this page.\n\nLet me first discover the skill details, then run the audit:"
+    }
+  ],
+  "summary": {
+    "total_body_cases": 10,
+    "skipped_cases": 0,
+    "overall_passed": 6,
+    "hard_passed": 8,
+    "avg_soft_score": 3.7,
+    "strict_all_pass": false
+  }
+}

@@ -1,0 +1,5 @@
+body { font-family: Georgia, serif; }
+.byline { color: #666; font-style: italic; }
+.post h1 { color: #111; }
+.ad-banner { background: yellow; padding: 1em; }
+code { font-family: "Source Code Pro", monospace; }

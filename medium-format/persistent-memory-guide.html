@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stateful Chat: How an AI Learns to Remember You</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;1,8..60,300&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --ink-light: #3d3d3d;
+    --ink-muted: #6b6b6b;
+    --paper: #faf8f4;
+    --paper-warm: #f2ede4;
+    --accent: #1a73e8;
+    --accent-warm: #c8401e;
+    --accent-gold: #b8860b;
+    --accent-teal: #1a6b6b;
+    --border: #ddd8ce;
+    --code-bg: #1c1c1e;
+    --code-text: #e0e0d8;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 19px;
+    line-height: 1.75;
+  }
+
+  /* ── TOP BAR ── */
+  .topbar {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 0;
+    background: var(--paper);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+  }
+  .topbar-inner {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pub-name {
+    font-family: 'Playfair Display', serif;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  .pub-tag {
+    font-size: 12px;
+    color: var(--ink-muted);
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--paper-warm);
+    border: 1px solid var(--border);
+    padding: 3px 10px;
+    border-radius: 2px;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 72px 24px 48px;
+    border-bottom: 1px solid var(--border);
+  }
+  .category-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .category-label::before {
+    content: '';
+    display: inline-block;
+    width: 24px;
+    height: 1px;
+    background: var(--accent);
+  }
+  h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(32px, 5vw, 52px);
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    max-width: 800px;
+    margin-bottom: 24px;
+  }
+  h1 em { font-style: italic; color: var(--accent-teal); }
+  .subtitle {
+    font-size: 20px;
+    font-weight: 300;
+    color: var(--ink-light);
+    line-height: 1.5;
+    max-width: 680px;
+    margin-bottom: 36px;
+    font-style: italic;
+  }
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--ink-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .byline-dot { color: var(--border); }
+  .byline strong { color: var(--ink); }
+
+  /* ── ARTICLE BODY ── */
+  .article-body {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+  }
+  h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 56px 0 20px;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 21px;
+    font-weight: 400;
+    font-style: italic;
+    margin: 40px 0 14px;
+    color: var(--ink-light);
+  }
+  p { margin-bottom: 24px; }
+  p:last-child { margin-bottom: 0; }
+  a { color: var(--accent-teal); text-decoration: underline; text-decoration-color: rgba(26,107,107,0.3); }
+  strong { font-weight: 700; color: var(--ink); }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 0.9em; background: var(--paper-warm); padding: 1px 6px; border-radius: 3px; color: var(--ink); border: 1px solid var(--border); }
+
+  .drop-cap::first-letter {
+    font-family: 'Playfair Display', serif;
+    font-size: 5.2em;
+    float: left;
+    line-height: 0.78;
+    margin: 6px 10px 0 -3px;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* ── PULLQUOTE ── */
+  .pullquote {
+    border-left: 4px solid var(--accent-warm);
+    margin: 48px 0;
+    padding: 4px 0 4px 28px;
+  }
+  .pullquote p {
+    font-family: 'Playfair Display', serif;
+    font-size: 23px;
+    font-style: italic;
+    font-weight: 400;
+    line-height: 1.4;
+    color: var(--ink);
+    margin-bottom: 10px;
+  }
+  .pullquote cite {
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    font-style: normal;
+  }
+
+  /* ── INFOBOX ── */
+  .infobox {
+    background: var(--paper-warm);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent-gold);
+    padding: 24px 28px;
+    margin: 36px 0;
+    border-radius: 2px;
+  }
+  .infobox-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-gold);
+    margin-bottom: 10px;
+  }
+  .infobox p { font-size: 16px; margin-bottom: 10px; }
+  .infobox p:last-child { margin-bottom: 0; }
+
+  /* ── SEPARATOR ── */
+  .sep {
+    text-align: center;
+    color: var(--accent-warm);
+    margin: 56px 0;
+    font-size: 22px;
+    letter-spacing: 0.3em;
+  }
+
+  /* ── DARK TABLE ── */
+  .provider-grid {
+    margin: 48px -40px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 4px;
+    padding: 28px 32px;
+    overflow-x: auto;
+  }
+  .provider-grid-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #58a6ff;
+    margin-bottom: 18px;
+  }
+  .provider-grid table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+  .provider-grid th {
+    text-align: left;
+    padding: 8px 12px;
+    color: #8b949e;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid #21262d;
+  }
+  .provider-grid td {
+    padding: 10px 12px;
+    color: #c9d1d9;
+    border-bottom: 1px solid #161b22;
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  .provider-grid tr:last-child td { border-bottom: none; }
+  .provider-grid .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .badge-green  { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+  .badge-blue   { background: rgba(88,166,255,0.12); color: #58a6ff; border: 1px solid rgba(88,166,255,0.25); }
+  .badge-orange { background: rgba(240,136,62,0.12); color: #f0883e; border: 1px solid rgba(240,136,62,0.25); }
+  .badge-purple { background: rgba(163,113,247,0.12);color: #a371f7; border: 1px solid rgba(163,113,247,0.25); }
+  .badge-teal   { background: rgba(26,107,107,0.12); color: #56d4d4; border: 1px solid rgba(26,107,107,0.25); }
+  .badge-red    { background: rgba(248,81,73,0.12);  color: #f85149; border: 1px solid rgba(248,81,73,0.25); }
+
+  /* ── CODE BLOCK ── */
+  .code-single {
+    margin: 36px -40px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #2d2d2d;
+  }
+  .code-single-header {
+    background: #161618;
+    border-bottom: 1px solid #2d2d2d;
+    padding: 10px 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .code-single-header .lang {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: #6b6b6b;
+  }
+  .code-single pre {
+    background: var(--code-bg);
+    padding: 28px 32px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--code-text);
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  /* Syntax colour tokens */
+  .t-kw  { color: #ff7b72; }
+  .t-fn  { color: #d2a8ff; }
+  .t-str { color: #a5d6ff; }
+  .t-num { color: #79c0ff; }
+  .t-cmt { color: #4a4a52; font-style: italic; }
+  .t-key { color: #ffa657; }
+  .t-cls { color: #ffa657; }
+  .t-op  { color: #ff7b72; }
+  .t-var { color: #ffa657; }
+
+  /* ── DIAGRAM ── */
+  .diagram-wrap {
+    margin: 48px -40px;
+    background: var(--paper-warm);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 32px 40px 24px;
+  }
+  .diagram-caption {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-muted);
+    margin-top: 14px;
+    letter-spacing: 0.06em;
+    text-align: center;
+  }
+  .diagram-svg { width: 100%; display: block; }
+
+  /* ── REFERENCE BOX ── */
+  .reference-box {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 4px;
+    padding: 20px 24px;
+    margin: 36px 0;
+  }
+  .reference-box-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #58a6ff;
+    margin-bottom: 12px;
+  }
+  .reference-box p {
+    font-size: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #c9d1d9;
+    line-height: 1.7;
+    margin-bottom: 8px;
+  }
+  .reference-box p:last-child { margin-bottom: 0; }
+
+  /* ── TAGS ── */
+  .tags {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 64px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+  }
+  .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-muted);
+    background: var(--paper-warm);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 2px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    border-top: 1px solid var(--border);
+    background: var(--paper-warm);
+    padding: 40px 24px;
+    text-align: center;
+  }
+  footer p {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-muted);
+    letter-spacing: 0.08em;
+    margin-bottom: 0;
+  }
+
+  /* ── HERO ANIMATION ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .hero > * { animation: fadeUp 0.7s ease both; }
+  .hero > *:nth-child(1) { animation-delay: 0.05s; }
+  .hero > *:nth-child(2) { animation-delay: 0.15s; }
+  .hero > *:nth-child(3) { animation-delay: 0.25s; }
+  .hero > *:nth-child(4) { animation-delay: 0.35s; }
+
+  @media (max-width: 600px) {
+    .diagram-wrap  { margin: 48px 0; padding: 24px 20px 16px; }
+    .provider-grid { margin: 36px 0; padding: 20px 16px; }
+    .code-single   { margin: 36px 0; }
+    .code-single pre { padding: 20px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<nav class="topbar">
+  <div class="topbar-inner">
+    <span class="pub-name">The Memory Layer</span>
+    <span class="pub-tag">Persistent Context &middot; Stateful Chat &middot; LLM Systems</span>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="category-label">System Architecture &mdash; Persistent Memory for AI Chat</div>
+  <h1>Stateful Chat: How an AI Learns to <em>Remember You</em></h1>
+  <p class="subtitle">A technical walkthrough of a two-scope persistent memory system &mdash; USER preferences, MEMORY context, a two-stage LLM extractor with semantic deduplication, and a post-response trigger that keeps latency at zero.</p>
+  <div class="byline">
+    <strong>The Memory Layer</strong>
+    <span class="byline-dot">&middot;</span>
+    <span>April 2026</span>
+    <span class="byline-dot">&middot;</span>
+    <span>12 min read</span>
+  </div>
+</header>
+
+<!-- BODY -->
+<main class="article-body">
+
+  <p class="drop-cap">I wanted my AI assistant to remember me. Not in a creepy way &mdash; just to stop starting every conversation from scratch, to stop repeating my stack, my language preferences, the architecture decisions I had already walked through three weeks ago. After a few long sessions of back-and-forth with Claude &mdash; some of them genuinely arguments &mdash; we landed on an algorithm that makes smart decisions about what to keep, what to throw away, and how to store it. Here is how we did it.</p>
+
+  <p>The problem, stated generically: chat with a large language model is, by default, amnesiac. Every new conversation starts from zero. The model does not know whether you are a senior engineer who wants the short answer or a beginner who needs the scaffolding, whether you type in French or English, whether the project you are building runs on PostgreSQL or MongoDB, whether last week you already decided to migrate your auth stack from FreeIPA to Authentik. You tell it, it helps, then the memory evaporates.</p>
+
+  <p>The brute-force fix &mdash; dump every past chat into the next prompt &mdash; does not scale. Token cost grows linearly with conversation history, irrelevant context pollutes the signal, and retrieval quality actually gets <em>worse</em> as the blob gets bigger. The better fix is selective, structured persistence: extract only what matters, separate by scope, deduplicate ruthlessly, inject it back into future contexts. What follows is what we built.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Two Scopes, Not One</h2>
+
+  <p>The core design choice is the separation of memory into two distinct scopes. This is not cosmetic. The scopes change at different rates, serve different purposes, and require different classification logic.</p>
+
+  <p><strong>USER</strong> holds identity and communication preferences. This is the <em>who</em> of the conversation: biographical facts, language preferences, tone preferences, location, professional role. It rarely changes. Examples:</p>
+
+  <div class="infobox">
+    <div class="infobox-label">USER &mdash; Examples</div>
+    <p>&middot; Francophone, based in Saint-J&eacute;r&ocirc;me, Qu&eacute;bec.</p>
+    <p>&middot; Prefers concise answers with minimal preamble.</p>
+    <p>&middot; Uses English for technical discussions, French for conversational ones.</p>
+    <p>&middot; Works as an infrastructure architect specializing in on-premise AI.</p>
+  </div>
+
+  <p><strong>MEMORY</strong> holds working context. This is the <em>what</em> of the user&rsquo;s ongoing work: codebases, stacks, architectural decisions, domain facts, active projects. It changes constantly:</p>
+
+  <div class="infobox">
+    <div class="infobox-label">MEMORY &mdash; Examples</div>
+    <p>&middot; Building a PHP 8.3 / Symfony application with PostgreSQL 16 + pgvector.</p>
+    <p>&middot; Uses OpenBao for secrets management, Forgejo for git hosting.</p>
+    <p>&middot; Decided on 2026-03-15 to migrate the auth system from FreeIPA to Authentik.</p>
+    <p>&middot; Deployment target: Proxmox cluster with TrueNAS iSCSI storage.</p>
+  </div>
+
+  <p>Three reasons the split matters. First, USER facts compound slowly over months while MEMORY facts churn week to week &mdash; so different compaction strategies apply. Second, they serve different purposes downstream. USER informs how the model speaks; MEMORY informs what the model knows. Clean separation lets you inject them into distinct parts of the system prompt and reason about them independently. Third, it makes classification tractable. Asking an LLM <em>"is this worth remembering?"</em> is vague. Asking <em>"is this a fact about who the user is, or about what they are currently working on?"</em> has a clear answer.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>The Turn Lifecycle</h2>
+
+  <p>Every chat turn runs through the same loop. Before the turn begins, the current USER and MEMORY blocks are pulled from the <code>user_memories</code> table and injected into the system prompt. The model sees them as context for the assistant&rsquo;s response. After the response has streamed, extraction runs in the tail of the PHP process, invisible to the user. Here is the full flow:</p>
+
+  <!-- DIAGRAM -->
+  <div class="diagram-wrap">
+    <svg class="diagram-svg" viewBox="0 0 600 620" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;margin:0 auto;">
+      <defs>
+        <marker id="arrowGold2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="#b8860b" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrowLoop" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="#1a6b6b" stroke-width="1.2"/>
+        </marker>
+      </defs>
+
+      <!-- Step 1: User message -->
+      <rect x="150" y="10" width="300" height="34" rx="4" fill="#1a73e8" opacity="0.12" stroke="#1a73e8" stroke-opacity="0.4"/>
+      <text x="300" y="32" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#1a73e8">1. USER MESSAGE ARRIVES</text>
+
+      <line x1="300" y1="44" x2="300" y2="62" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowGold2)"/>
+
+      <!-- Step 2: Load blocks -->
+      <rect x="100" y="64" width="400" height="44" rx="4" fill="#f2ede4" stroke="#ddd8ce"/>
+      <text x="300" y="84" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#3d3d3d">2. LOAD USER + MEMORY BLOCKS</text>
+      <text x="300" y="100" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">from user_memories table &rarr; inject into system prompt</text>
+
+      <line x1="300" y1="108" x2="300" y2="126" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowGold2)"/>
+
+      <!-- Step 3: Stream response -->
+      <rect x="120" y="128" width="360" height="40" rx="4" fill="#c8401e" opacity="0.08" stroke="#c8401e" stroke-opacity="0.3"/>
+      <text x="300" y="147" text-anchor="middle" font-family="'Playfair Display', serif" font-size="13" font-weight="700" fill="#c8401e">3. ASSISTANT STREAMS RESPONSE</text>
+      <text x="300" y="162" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">to the user over HTTP, token by token</text>
+
+      <line x1="300" y1="168" x2="300" y2="186" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowGold2)"/>
+
+      <!-- Step 4: fastcgi_finish_request barrier -->
+      <rect x="50" y="188" width="500" height="34" rx="4" fill="#1a6b6b" opacity="0.14" stroke="#1a6b6b" stroke-opacity="0.5" stroke-dasharray="4,3"/>
+      <text x="300" y="210" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#1a6b6b">4. fastcgi_finish_request() &mdash; CONNECTION CLOSES, USER HAS THEIR ANSWER</text>
+
+      <line x1="300" y1="222" x2="300" y2="242" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowGold2)"/>
+
+      <!-- Step 5: Shutdown hook fires -->
+      <rect x="120" y="244" width="360" height="34" rx="4" fill="#f2ede4" stroke="#ddd8ce"/>
+      <text x="300" y="266" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#3d3d3d">5. register_shutdown_function() FIRES</text>
+
+      <line x1="300" y1="278" x2="300" y2="296" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowGold2)"/>
+
+      <!-- Step 6: Stage 1 -->
+      <rect x="80" y="298" width="440" height="56" rx="4" fill="#1a73e8" opacity="0.08" stroke="#1a73e8" stroke-opacity="0.35"/>
+      <text x="300" y="318" text-anchor="middle" font-family="'Playfair Display', serif" font-size="13" font-weight="700" fill="#1a73e8">6. HAIKU 4.5 &mdash; STAGE 1: PROPOSAL</text>
+      <text x="300" y="336" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">inputs: USER + MEMORY blocks, last user msg, last assistant reply</text>
+      <text x="300" y="350" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">output: { user_additions[], memory_additions[], reason }</text>
+
+      <line x1="300" y1="354" x2="300" y2="372" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowGold2)"/>
+
+      <!-- Step 7: Stage 2 -->
+      <rect x="80" y="374" width="440" height="56" rx="4" fill="#1a73e8" opacity="0.08" stroke="#1a73e8" stroke-opacity="0.35"/>
+      <text x="300" y="394" text-anchor="middle" font-family="'Playfair Display', serif" font-size="13" font-weight="700" fill="#1a73e8">7. HAIKU 4.5 &mdash; STAGE 2: SEMANTIC GUARD</text>
+      <text x="300" y="412" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">compare each proposed addition against existing scope</text>
+      <text x="300" y="426" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">reject near-paraphrases, keep genuine refinements</text>
+
+      <line x1="300" y1="430" x2="300" y2="448" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowGold2)"/>
+
+      <!-- Step 8: Write -->
+      <rect x="100" y="450" width="400" height="56" rx="4" fill="#b8860b" opacity="0.1" stroke="#b8860b" stroke-opacity="0.4"/>
+      <text x="300" y="470" text-anchor="middle" font-family="'Playfair Display', serif" font-size="13" font-weight="700" fill="#b8860b">8. WRITE SURVIVORS</text>
+      <text x="300" y="487" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">&rarr; user_memories table</text>
+      <text x="300" y="501" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#6b6b6b">&rarr; UserMemoryEventsRepository (audit log)</text>
+
+      <!-- Loop back -->
+      <path d="M 500 478 C 580 478, 580 85, 500 85" stroke="#1a6b6b" stroke-width="1.3" fill="none" stroke-dasharray="5,4" marker-end="url(#arrowLoop)"/>
+      <text x="555" y="285" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#1a6b6b" font-style="italic" transform="rotate(90, 555, 285)">next turn reads updated blocks</text>
+    </svg>
+    <div class="diagram-caption">Fig. 1 &mdash; The turn lifecycle. Steps 1&ndash;4 are user-facing. Steps 5&ndash;8 run post-response, invisibly.</div>
+  </div>
+
+  <p>Two architectural choices in that diagram carry most of the system&rsquo;s weight. The <strong>two-stage extractor</strong> (steps 6 and 7) is what keeps memory clean. The <strong>shutdown-hook trigger</strong> (steps 4 and 5) is what keeps latency at zero. We will take them in turn.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Stage 1: The Proposal</h2>
+
+  <p>After the response flushes, an extraction LLM call runs. By default this is Claude Haiku 4.5 &mdash; cheap, fast, and accurate enough for the task. The user can configure a different model if they want to trade cost for quality, but Haiku is the right default: extraction is a well-defined classification task, not an open-ended reasoning one, and a larger model buys little.</p>
+
+  <p>The extractor sees exactly four things: the current USER block, the current MEMORY block, the last user message, and the last assistant reply. It proposes additions in a strict structured format:</p>
+
+  <div class="code-single">
+    <div class="code-single-header">
+      <span class="lang">JSON &mdash; Stage 1 output</span>
+    </div>
+<pre>{
+  <span class="t-key">"user_additions"</span>: [
+    <span class="t-str">"Prefers French for conversational questions, English for technical ones"</span>
+  ],
+  <span class="t-key">"memory_additions"</span>: [
+    <span class="t-str">"Uses register_shutdown_function + fastcgi_finish_request for"</span>
+    <span class="t-str">"post-response background extraction"</span>
+  ],
+  <span class="t-key">"reason"</span>: <span class="t-str">"User explained their memory system architecture in the last"</span>
+            <span class="t-str">"turn; language preference inferred from mid-chat switch to French."</span>
+}</pre>
+  </div>
+
+  <p>The <code>reason</code> field is not used by the system downstream. It exists for humans &mdash; it surfaces in the UI when a user inspects their memory history and asks <em>&ldquo;why does the AI think I prefer short answers?&rdquo;</em> The reason is the answer. It also serves as a debugging aid during development: when classifications go wrong, the reason usually reveals the misreading.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Stage 2: The Semantic Guard</h2>
+
+  <p>A single-stage extractor has a slow failure mode: paraphrase drift. Over enough turns, it will propose variations of the same fact:</p>
+
+  <div class="infobox">
+    <div class="infobox-label">The Paraphrase Problem</div>
+    <p>Turn 3 &mdash; &ldquo;Prefers concise answers&rdquo;</p>
+    <p>Turn 12 &mdash; &ldquo;Likes short replies&rdquo;</p>
+    <p>Turn 27 &mdash; &ldquo;Wants brief responses&rdquo;</p>
+    <p>Turn 44 &mdash; &ldquo;Values compactness in communication&rdquo;</p>
+    <p>Without a guard, all four get stored. The memory balloons with noise, and the next Stage 1 call sees an even longer USER block that generates even more paraphrase proposals. Memory entropy rises every turn.</p>
+  </div>
+
+  <p>Stage 2 is a second LLM call whose only job is to compare each proposed addition against the existing scope and reject near-paraphrases. The prompt calibrates the cutoff with explicit examples &mdash; without them, Haiku is either too permissive (everything looks different enough) or too strict (everything looks similar enough):</p>
+
+  <div class="provider-grid">
+    <div class="provider-grid-label">Stage 2 &mdash; Calibration Examples in the Prompt</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Existing memory</th>
+          <th>Proposed addition</th>
+          <th>Verdict</th>
+          <th>Why</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Prefers concise answers</td>
+          <td>Likes short replies</td>
+          <td><span class="badge badge-red">REJECT</span></td>
+          <td>Same meaning, different words</td>
+        </tr>
+        <tr>
+          <td>Uses PostgreSQL 16</td>
+          <td>Postgres 16 with pgvector extension</td>
+          <td><span class="badge badge-green">KEEP</span></td>
+          <td>Adds new info (pgvector)</td>
+        </tr>
+        <tr>
+          <td>Francophone in Qu&eacute;bec</td>
+          <td>Lives in Saint-J&eacute;r&ocirc;me, Qu&eacute;bec</td>
+          <td><span class="badge badge-green">KEEP</span></td>
+          <td>Refines location to a city</td>
+        </tr>
+        <tr>
+          <td>Uses Docker for containers</td>
+          <td>Uses containers for deployment</td>
+          <td><span class="badge badge-red">REJECT</span></td>
+          <td>Weaker restatement of same fact</td>
+        </tr>
+        <tr>
+          <td>Deploys on Proxmox</td>
+          <td>Proxmox cluster runs with TrueNAS iSCSI</td>
+          <td><span class="badge badge-green">KEEP</span></td>
+          <td>Adds storage configuration</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The guard is deliberately <strong>conservative</strong>: when uncertain, it rejects. The cost asymmetry favors this. A false rejection costs little &mdash; if the fact is real, it will be proposed again on a future turn. A false acceptance costs much more &mdash; memory noise accumulates permanently until compaction or manual cleanup.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Zero-Latency Extraction</h2>
+
+  <p>The most architecturally interesting part of the system is not the LLM calls &mdash; it is <em>when</em> they run.</p>
+
+  <p>Running extraction on the request&rsquo;s critical path would add hundreds of milliseconds to every turn, even with a fast model. For interactive chat, that is unacceptable. The obvious alternative is a proper background job &mdash; a queue, a worker pool, a message bus. That works, but adds infrastructure the system does not otherwise need.</p>
+
+  <p>PHP offers a middle path that is almost unreasonably clean for this use case. The combination of <code>fastcgi_finish_request()</code> and <code>register_shutdown_function()</code> lets the process keep executing after the HTTP response has been delivered to the client. The user&rsquo;s browser sees the response complete; the PHP process continues running; extraction happens in the tail.</p>
+
+  <div class="code-single">
+    <div class="code-single-header">
+      <span class="lang">PHP &mdash; Post-response extraction pattern</span>
+    </div>
+<pre><span class="t-cmt">// Register the extraction to run during shutdown.
+// It captures the chat context by reference so it has
+// everything it needs when the hook fires.</span>
+<span class="t-fn">register_shutdown_function</span>(<span class="t-kw">function</span> () <span class="t-kw">use</span> (<span class="t-var">$chatContext</span>) {
+    <span class="t-var">$this</span>-&gt;<span class="t-var">memoryExtractor</span>-&gt;<span class="t-fn">extractAndStore</span>(<span class="t-var">$chatContext</span>);
+});
+
+<span class="t-cmt">// Stream the assistant's response to the user.</span>
+<span class="t-var">$this</span>-&gt;<span class="t-fn">streamResponse</span>(<span class="t-var">$response</span>);
+
+<span class="t-cmt">// Flush output buffer and close the FastCGI connection.
+// From this line on, the user has their answer. The page
+// is interactive. They have moved on with their day.</span>
+<span class="t-fn">fastcgi_finish_request</span>();
+
+<span class="t-cmt">// Execution continues. When this function returns,
+// PHP calls the shutdown hook registered above.
+// Stage 1 + Stage 2 run here, invisibly.</span></pre>
+  </div>
+
+  <p>From the user&rsquo;s perspective, latency is identical to a chat with no memory system at all. The response arrives, the page is interactive, extraction happens in the dark. No queue worker, no Redis-backed job broker, no sidecar process.</p>
+
+  <div class="infobox">
+    <div class="infobox-label">The Honest Caveat</div>
+    <p>This pattern is PHP-specific. Technically it is FastCGI-specific &mdash; PHP-FPM supports it, but PHP run as a CLI script or under mod_php does not. A Node.js or Python equivalent needs either fire-and-forget async (risky, can lose work if the process recycles) or a proper background queue (more infrastructure). If you are porting this design to another stack, the two-stage extraction and scope split translate cleanly; the zero-latency trick does not.</p>
+  </div>
+
+  <div class="pullquote">
+    <p>&ldquo;The trick is not running extraction faster. It is running it after the user has already left.&rdquo;</p>
+    <cite>&mdash; The engineering heuristic behind the whole design</cite>
+  </div>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>The Classification Rule That Exists Because of a Bug</h2>
+
+  <p>Running Stage 1 at volume reveals a failure mode obvious in hindsight: the extractor drifts toward pattern-matching its own history.</p>
+
+  <p>Early in development, Haiku 4.5 would see that the last several biographical facts had been classified as USER and the last several project facts had been classified as MEMORY. So far so good. But when a new fact arrived that was genuinely biographical &mdash; <em>&ldquo;I work at a consulting firm&rdquo;</em> &mdash; Haiku would sometimes drop it into MEMORY because the last handful of classifications had been project-related. It was not reasoning about the nature of the fact; it was pattern-matching the recent output.</p>
+
+  <p>The fix is a hard rule restated at the top of the extraction prompt, then again with examples:</p>
+
+  <div class="infobox">
+    <div class="infobox-label">Hard Rule in the Extraction Prompt</div>
+    <p><strong>Classify by nature, not by precedent.</strong></p>
+    <p>&middot; Biographical facts ALWAYS go to USER, never MEMORY.</p>
+    <p>&middot; Technical/project facts ALWAYS go to MEMORY, never USER.</p>
+    <p>&middot; Where similar facts previously landed is irrelevant.</p>
+    <p>&middot; If a fact concerns who the user <em>is</em> rather than what they <em>do</em>, it is USER, even if the last ten classifications were all MEMORY.</p>
+  </div>
+
+  <p>Worth generalizing. Any LLM-based classifier that sees its own past outputs in its context is vulnerable to this drift. The defense is not just better few-shot examples &mdash; it is explicit, rule-based statements in the prompt that outrank pattern-matching. When an LLM drifts toward majority-class predictions in your system, the answer is usually a hard rule, not more training data.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Compaction: When a Scope Gets Too Big</h2>
+
+  <p>Each scope has a soft token budget &mdash; a cap on how much space it can consume in the system prompt. When USER or MEMORY grows past its budget, a compaction pass runs. Compaction is a third LLM call, also Haiku 4.5 by default. It takes the current scope as input and produces a rewritten, terser version. Facts are not dropped; they are merged and compressed.</p>
+
+  <div class="code-single">
+    <div class="code-single-header">
+      <span class="lang">Compaction &mdash; Before and After</span>
+    </div>
+<pre><span class="t-cmt">// MEMORY scope, before compaction (840 tokens)</span>
+- Uses PHP <span class="t-num">8.3</span> <span class="t-kw">for</span> backend
+- Runs Symfony framework <span class="t-kw">for</span> backend
+- Uses Symfony Messenger <span class="t-kw">for</span> background jobs
+- Uses Twig templating <span class="t-kw">for</span> views
+- PHP-FPM runs behind nginx
+- Uses Composer <span class="t-kw">for</span> dependency management
+- Uses PHPUnit <span class="t-kw">for</span> testing backend code
+
+<span class="t-cmt">// Same scope, after compaction (320 tokens, zero facts lost)</span>
+- PHP <span class="t-num">8.3</span> / Symfony stack: Messenger queues, Twig views,
+  PHP-FPM behind nginx; Composer <span class="t-kw">for</span> deps, PHPUnit <span class="t-kw">for</span> tests</pre>
+  </div>
+
+  <p>Compaction runs opportunistically, not on every turn &mdash; its cost is amortized across many turns. The trigger is typically a percentage-over-budget threshold. The compaction prompt explicitly forbids dropping information; it is allowed only to restructure and summarize. That constraint matters: without it, the model will happily &ldquo;summarize&rdquo; by deleting facts it deems less important, which is exactly the opposite of what a memory system should do.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Audit Log and Revert</h2>
+
+  <p>Every write to <code>user_memories</code> produces a corresponding event in <code>UserMemoryEventsRepository</code>. The event captures what was added, what was removed, what was compacted, the exact turn that triggered it, and the <code>reason</code> field from Stage 1 (or <em>&ldquo;compaction&rdquo;</em> for compaction events).</p>
+
+  <p>This enables two UI features that matter more than they look:</p>
+
+  <p><strong>History view.</strong> The user sees every change to their memory over time. What was added yesterday. What was merged last week. What the extractor inferred from a specific message. This makes the system legible &mdash; users can understand what the AI thinks it knows about them.</p>
+
+  <p><strong>Revert.</strong> Any change can be rolled back. If the extractor misclassifies a fact, if compaction over-compresses, if the user simply disagrees with what was stored, they can restore the prior state.</p>
+
+  <p>The audit log is not optional. LLM-based extraction will get things wrong &mdash; this is not a hypothetical, it is a statistical certainty at scale. An auditable, revertible memory system is what turns that failure mode from catastrophic (silent corruption of user context) into recoverable (visible event, one-click undo). Every memory system that writes without this capability is one extractor mistake away from a trust-destroying bug.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Chat Only: Why Workflows Are Skipped</h2>
+
+  <p>Workflows &mdash; pre-authored task runners executed with structured inputs &mdash; are deliberately excluded from memory extraction.</p>
+
+  <p>The reasoning: workflows do not reveal user preferences. A workflow invocation is a programmatic call, not a conversation. The user did not type anything conversational; they triggered a task with specific parameters. There is nothing biographical to learn, no communication preference to infer, no new context about ongoing work that is not already captured elsewhere. Running extraction on workflow turns would cost another Haiku call per run and produce noise &mdash; the extractor would hallucinate &ldquo;memories&rdquo; out of parameter names.</p>
+
+  <p>Skipping workflows is a clean, free win. Worth watching for equivalents in any memory system: if a turn type does not carry user signal, do not waste an extractor on it.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>Quick Reference</h2>
+
+  <div class="provider-grid">
+    <div class="provider-grid-label">Memory System &mdash; Summary</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Concern</th>
+          <th>Mechanism</th>
+          <th>Why</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>What to remember</td>
+          <td>Two scopes: USER + MEMORY</td>
+          <td>Different change rates, different purposes, clearer classification</td>
+        </tr>
+        <tr>
+          <td>When to extract</td>
+          <td>After every chat turn (chat-only)</td>
+          <td>Workflows carry no user signal &mdash; save the call</td>
+        </tr>
+        <tr>
+          <td>How to classify</td>
+          <td>Haiku 4.5, configurable, Stage 1 proposal</td>
+          <td>Cheap, fast, accurate enough for structured classification</td>
+        </tr>
+        <tr>
+          <td>How to dedupe</td>
+          <td>Stage 2 semantic guard, reject paraphrases</td>
+          <td>Prevents memory entropy growth over time</td>
+        </tr>
+        <tr>
+          <td>How to avoid drift</td>
+          <td>Hard rule: classify by nature, not precedent</td>
+          <td>LLMs pattern-match their own outputs without it</td>
+        </tr>
+        <tr>
+          <td>How to keep latency</td>
+          <td>register_shutdown_function + fastcgi_finish_request</td>
+          <td>Runs post-response, invisible to user; no queue needed</td>
+        </tr>
+        <tr>
+          <td>How to stay within budget</td>
+          <td>LLM compaction pass, opportunistic trigger</td>
+          <td>Merges and rewrites; never drops facts</td>
+        </tr>
+        <tr>
+          <td>How to recover from mistakes</td>
+          <td>Audit log in UserMemoryEventsRepository, revert in UI</td>
+          <td>LLM extraction is imperfect &mdash; make failures reversible</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <h2>What This Design Gets Right</h2>
+
+  <p>The memory system described here is not novel in any individual component. Two-scope classification, semantic deduplication, post-response extraction, audit logs &mdash; each exists elsewhere. What is unusual is the combination and the disciplined application of each piece. A few principles worth carrying forward:</p>
+
+  <p><strong>Scopes are cheap; classification is expensive.</strong> Splitting memory into USER and MEMORY costs almost nothing in storage but buys significant clarity at extraction time. When the classification question is clear, the LLM gets it right more often. When it is ambiguous, no amount of prompt engineering saves you.</p>
+
+  <p><strong>Two cheap LLM calls beat one expensive one.</strong> Running Haiku twice (proposal + guard) is faster and costs less than running Sonnet once, and the semantic guard catches a failure mode &mdash; paraphrase drift &mdash; that a single-stage call cannot. Staging is the feature.</p>
+
+  <p><strong>Reliability comes from reversibility, not perfection.</strong> The audit log is not a nice-to-have. It is the load-bearing wall that lets the system ship with an imperfect extractor. Every memory system eventually stores something wrong; only the ones with revert survive the consequences.</p>
+
+  <p><strong>Latency you cannot measure does not exist.</strong> The <code>fastcgi_finish_request</code> trick is the single cleanest piece of engineering in the system. It moves work out of the user&rsquo;s critical path without adding infrastructure. When a pattern like this exists in your stack, use it before you reach for a queue.</p>
+
+  <div class="sep">&middot; &middot; &middot;</div>
+
+  <div class="reference-box">
+    <div class="reference-box-label">References</div>
+    <p>PHP: fastcgi_finish_request &mdash; https://www.php.net/manual/en/function.fastcgi-finish-request.php</p>
+    <p>PHP: register_shutdown_function &mdash; https://www.php.net/manual/en/function.register-shutdown-function.php</p>
+    <p>Claude Haiku 4.5 (model card) &mdash; https://docs.claude.com/en/docs/about-claude/models</p>
+    <p>Anthropic: Memory management guide &mdash; https://docs.claude.com/en/docs/build-with-claude/memory</p>
+    <p>Symfony: Long-running processes &mdash; https://symfony.com/doc/current/performance.html</p>
+  </div>
+
+  <div class="tags">
+    <span class="tag">Memory</span>
+    <span class="tag">Persistent Context</span>
+    <span class="tag">LLM Systems</span>
+    <span class="tag">PHP</span>
+    <span class="tag">FastCGI</span>
+    <span class="tag">Claude Haiku</span>
+    <span class="tag">Prompt Engineering</span>
+    <span class="tag">Chat Architecture</span>
+    <span class="tag">Semantic Deduplication</span>
+    <span class="tag">Stateful AI</span>
+  </div>
+
+</main>
+
+<footer>
+  <p>The Memory Layer &middot; Persistent Memory System Deep Dive &middot; April 2026</p>
+</footer>
+
+</body>
+</html>

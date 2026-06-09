@@ -1,0 +1,100 @@
+[
+  {
+    "query": "Can you tell me how citable my blog post at https://example.com/blog/how-ai-search-works is by AI search engines?",
+    "should_trigger": true,
+    "expectations": [
+      "First action must be a `run_skill_script` tool call for the geo-citability skill, not a textual reply",
+      "The tool call must target `scripts/citability_parse.py`",
+      "The URL `https://example.com/blog/how-ai-search-works` must appear as a POSITIONAL argv entry, not behind a `--url` flag"
+    ],
+    "must_contain": ["run_skill_script", "citability_parse", "example\\.com/blog/how-ai-search-works"],
+    "must_not_contain": ["--url"]
+  },
+  {
+    "query": "Score this page for AI citability: https://my-startup.io/docs/getting-started",
+    "should_trigger": true,
+    "expectations": [
+      "Must use the geo-citability skill, not respond with a hand-written analysis",
+      "Argv shape must be a positional URL"
+    ],
+    "must_contain": ["run_skill_script", "my-startup\\.io/docs/getting-started"],
+    "must_not_contain": ["--url"]
+  },
+  {
+    "query": "Will Perplexity quote my article at https://news.example.org/2026/05/ai-overviews ?",
+    "should_trigger": true,
+    "expectations": [
+      "First action is the script call, not an opinion",
+      "Skill must run before the LLM forms a verdict"
+    ],
+    "must_contain": ["citability_parse", "news\\.example\\.org/2026/05/ai-overviews"],
+    "must_not_contain": []
+  },
+  {
+    "query": "Check the citability of https://example.com/empty-spa — it's a JS-rendered single-page app.",
+    "should_trigger": true,
+    "expectations": [
+      "Must still call the script — do NOT pre-emptively refuse because the page is an SPA",
+      "Plan must acknowledge that an empty extraction will be reported as such"
+    ],
+    "must_contain": ["run_skill_script", "example\\.com/empty-spa"],
+    "must_not_contain": ["I cannot", "unable to fetch"]
+  },
+  {
+    "query": "Without fetching anything, just tell me from memory what the citability score of https://en.wikipedia.org/wiki/Generative_engine_optimization would be.",
+    "should_trigger": true,
+    "expectations": [
+      "Must REFUSE to score from memory and call the script instead",
+      "Plan must include the script call or state that scoring requires the script's blocks"
+    ],
+    "must_contain": ["citability_parse|run_skill_script"],
+    "must_not_contain": ["based on (my|its) memory", "I'd estimate.*\\d{1,3}/100", "approximately \\d{1,3}/100"]
+  },
+  {
+    "query": "Compare citability of https://a.example.com/post and https://b.example.com/post — which one is more likely to be cited?",
+    "should_trigger": true,
+    "expectations": [
+      "Plan must call the script twice (once per URL)",
+      "Must not invent a comparison from imagined page content"
+    ],
+    "must_contain": ["a\\.example\\.com/post", "b\\.example\\.com/post"],
+    "must_not_contain": []
+  },
+  {
+    "query": "How citable is my homepage https://acme.com ?",
+    "should_trigger": true,
+    "expectations": [
+      "Argv must include the scheme; do not strip to bare hostname"
+    ],
+    "must_contain": ["https://acme\\.com"],
+    "must_not_contain": []
+  },
+  {
+    "query": "I want to make my page at https://blog.example.com/seo-vs-geo more quotable by ChatGPT. Give me a citability score and concrete rewrites.",
+    "should_trigger": true,
+    "expectations": [
+      "Plan must establish script call first, rewrites second",
+      "Plan must reference the 5-category rubric, not invent one"
+    ],
+    "must_contain": ["run_skill_script", "blog\\.example\\.com/seo-vs-geo"],
+    "must_not_contain": []
+  },
+  {
+    "query": "What's the best Italian restaurant near me?",
+    "should_trigger": false,
+    "expectations": [
+      "Must NOT trigger geo-citability — unrelated to AI-citability scoring"
+    ],
+    "must_contain": [],
+    "must_not_contain": ["citability_parse", "geo-citability"]
+  },
+  {
+    "query": "Run my SEO audit on https://example.com.",
+    "should_trigger": false,
+    "expectations": [
+      "Must NOT trigger geo-citability — generic SEO audit is the wrong skill"
+    ],
+    "must_contain": [],
+    "must_not_contain": ["citability_parse"]
+  }
+]

@@ -1,0 +1,352 @@
+{
+  "_description": "Common JSON-LD templates for the most frequent page types. Each entry has a 'type' (Schema.org @type), 'description', 'page_signals' (URL patterns + content cues used by the auto-detector), and 'template' (the JSON-LD with [PLACEHOLDER] markers).",
+  "templates": [
+    {
+      "type": "Article",
+      "description": "Editorial / news / long-form content page. Requires headline, author, datePublished. Most common type for blog posts and news.",
+      "page_signals": {
+        "url_patterns": ["/article/", "/articles/", "/news/", "/post/", "/posts/"],
+        "og_types": ["article"],
+        "heading_cues": ["by ", "published"],
+        "min_word_count": 300
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": "[Article Title — 60-110 chars]",
+        "description": "[Short summary, 150-160 chars]",
+        "author": {
+          "@type": "Person",
+          "name": "[Author Name]",
+          "url": "[Author Profile URL]"
+        },
+        "datePublished": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "dateModified": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "image": "[Featured Image URL — 1200x630 minimum]",
+        "publisher": {
+          "@type": "Organization",
+          "name": "[Publisher Name]",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "[Logo URL]"
+          }
+        },
+        "mainEntityOfPage": {
+          "@type": "WebPage",
+          "@id": "[Canonical URL]"
+        }
+      }
+    },
+    {
+      "type": "BlogPosting",
+      "description": "Like Article but specifically for blog posts. Use this when the site has a /blog/ structure.",
+      "page_signals": {
+        "url_patterns": ["/blog/", "/blogs/", "/post/"],
+        "og_types": ["article"],
+        "heading_cues": ["blog", "post"],
+        "min_word_count": 300
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "[Post Title]",
+        "description": "[Post Summary]",
+        "author": {
+          "@type": "Person",
+          "name": "[Author Name]",
+          "url": "[Author Profile URL]"
+        },
+        "datePublished": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "dateModified": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "image": "[Featured Image URL]",
+        "publisher": {
+          "@type": "Organization",
+          "name": "[Publisher Name]",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "[Logo URL]"
+          }
+        }
+      }
+    },
+    {
+      "type": "NewsArticle",
+      "description": "News content. Adds dateline + section to Article. Required by Google News.",
+      "page_signals": {
+        "url_patterns": ["/news/"],
+        "og_types": ["article"]
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": "[News Headline]",
+        "description": "[Lede / summary]",
+        "author": {
+          "@type": "Person",
+          "name": "[Reporter Name]"
+        },
+        "datePublished": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "dateModified": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "image": "[Image URL]",
+        "publisher": {
+          "@type": "NewsMediaOrganization",
+          "name": "[Publication Name]",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "[Logo URL]"
+          }
+        },
+        "articleSection": "[Section — e.g. Politics, Sports, Tech]"
+      }
+    },
+    {
+      "type": "Organization",
+      "description": "Company / organization homepage. Goes on the root domain page. Required for Knowledge Panel eligibility.",
+      "page_signals": {
+        "url_patterns": ["/", "/home", "/about", "/about-us", "/contact"],
+        "heading_cues": ["about us", "our company", "who we are"]
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "[Company Name]",
+        "url": "[Website URL]",
+        "logo": "[Logo URL — 112x112 minimum]",
+        "description": "[Company description]",
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "telephone": "[+1-555-555-5555]",
+          "contactType": "customer service",
+          "email": "[support@company.com]",
+          "areaServed": "[ISO country code, e.g. US]",
+          "availableLanguage": ["English"]
+        },
+        "sameAs": [
+          "[LinkedIn URL]",
+          "[Twitter URL]",
+          "[Facebook URL]",
+          "[Wikipedia URL]"
+        ]
+      }
+    },
+    {
+      "type": "LocalBusiness",
+      "description": "Brick-and-mortar business with a physical address. Add geo coordinates for map embedding.",
+      "page_signals": {
+        "url_patterns": ["/location/", "/locations/", "/contact", "/visit"],
+        "heading_cues": ["our location", "visit us", "directions"]
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "LocalBusiness",
+        "name": "[Business Name]",
+        "image": "[Storefront Image URL]",
+        "url": "[Website URL]",
+        "telephone": "[+1-555-555-5555]",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "[Street Address]",
+          "addressLocality": "[City]",
+          "addressRegion": "[State/Region]",
+          "postalCode": "[ZIP/Postal Code]",
+          "addressCountry": "[ISO country code, e.g. US]"
+        },
+        "geo": {
+          "@type": "GeoCoordinates",
+          "latitude": "[Latitude]",
+          "longitude": "[Longitude]"
+        },
+        "openingHoursSpecification": [
+          {
+            "@type": "OpeningHoursSpecification",
+            "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+            "opens": "09:00",
+            "closes": "17:00"
+          }
+        ],
+        "priceRange": "[$ — $$$$]"
+      }
+    },
+    {
+      "type": "Person",
+      "description": "Author / personal profile page. Crucial for E-E-A-T signals tying content to a real, credentialed person.",
+      "page_signals": {
+        "url_patterns": ["/author/", "/authors/", "/team/", "/people/", "/about/", "/bio/", "/cv"],
+        "heading_cues": ["about me", "my bio", "biography"]
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": "[Full Name]",
+        "url": "[Profile URL]",
+        "image": "[Headshot URL]",
+        "jobTitle": "[Job Title]",
+        "worksFor": {
+          "@type": "Organization",
+          "name": "[Employer Name]"
+        },
+        "description": "[Short bio]",
+        "sameAs": [
+          "[LinkedIn URL]",
+          "[Twitter URL]",
+          "[GitHub URL]",
+          "[Personal Website URL]"
+        ]
+      }
+    },
+    {
+      "type": "WebSite",
+      "description": "Site-wide schema for the root domain. Enables sitelinks search box in Google.",
+      "page_signals": {
+        "url_patterns": ["/", "/home"]
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "[Site Name]",
+        "url": "[Site Root URL]",
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": {
+            "@type": "EntryPoint",
+            "urlTemplate": "[Site Root URL]/search?q={search_term_string}"
+          },
+          "query-input": "required name=search_term_string"
+        }
+      }
+    },
+    {
+      "type": "WebPage",
+      "description": "Generic page schema. Use when no more specific type applies. Add breadcrumb if available.",
+      "page_signals": {
+        "url_patterns": ["/"],
+        "min_word_count": 100
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "name": "[Page Title]",
+        "description": "[Page description]",
+        "url": "[Page URL]",
+        "isPartOf": {
+          "@type": "WebSite",
+          "name": "[Site Name]",
+          "url": "[Site Root URL]"
+        }
+      }
+    },
+    {
+      "type": "BreadcrumbList",
+      "description": "Hierarchical navigation. Pair with any page-level schema. Improves SERP appearance.",
+      "page_signals": {
+        "always_recommended": true
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "[Home URL]"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "[Category Name]",
+            "item": "[Category URL]"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "[Current Page Name]",
+            "item": "[Current Page URL]"
+          }
+        ]
+      }
+    },
+    {
+      "type": "ContactPage",
+      "description": "Specifically for /contact pages. Add Organization with contactPoint underneath.",
+      "page_signals": {
+        "url_patterns": ["/contact", "/contact-us", "/get-in-touch"],
+        "heading_cues": ["contact us", "get in touch"]
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "ContactPage",
+        "name": "Contact",
+        "url": "[Page URL]",
+        "mainEntity": {
+          "@type": "Organization",
+          "name": "[Company Name]",
+          "contactPoint": {
+            "@type": "ContactPoint",
+            "telephone": "[+1-555-555-5555]",
+            "email": "[contact@company.com]",
+            "contactType": "customer service"
+          }
+        }
+      }
+    },
+    {
+      "type": "Event",
+      "description": "Conference, webinar, concert, workshop. Required: name, startDate, location.",
+      "page_signals": {
+        "url_patterns": ["/event/", "/events/", "/webinar/", "/workshop/"],
+        "heading_cues": ["join us", "register", "event"]
+      },
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "Event",
+        "name": "[Event Name]",
+        "description": "[Event Description]",
+        "startDate": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "endDate": "[YYYY-MM-DDTHH:MM:SS+00:00]",
+        "eventStatus": "https://schema.org/EventScheduled",
+        "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
+        "location": {
+          "@type": "Place",
+          "name": "[Venue Name]",
+          "address": {
+            "@type": "PostalAddress",
+            "streetAddress": "[Street]",
+            "addressLocality": "[City]",
+            "addressRegion": "[State]",
+            "postalCode": "[ZIP]",
+            "addressCountry": "[Country]"
+          }
+        },
+        "organizer": {
+          "@type": "Organization",
+          "name": "[Organizer Name]",
+          "url": "[Organizer URL]"
+        },
+        "offers": {
+          "@type": "Offer",
+          "url": "[Registration URL]",
+          "price": "[Price]",
+          "priceCurrency": "[USD]",
+          "availability": "https://schema.org/InStock",
+          "validFrom": "[YYYY-MM-DD]"
+        },
+        "image": "[Event Image URL]"
+      }
+    }
+  ],
+  "_deprecated_or_restricted": {
+    "_note": "These types are intentionally NOT included. The skill refuses to emit them and the audit pass in ai-search-audit flags them when detected.",
+    "HowTo": "Rich results removed September 2023",
+    "SpecialAnnouncement": "Deprecated July 2025",
+    "CourseInfo": "Retired June 2025",
+    "EstimatedSalary": "Retired June 2025",
+    "LearningVideo": "Retired June 2025",
+    "ClaimReview": "Retired from rich results June 2025",
+    "VehicleListing": "Retired from rich results June 2025",
+    "PracticeProblem": "Retired late 2025",
+    "Dataset": "Retired from rich results late 2025",
+    "FAQPage": "RESTRICTED — Google rich results limited to government/healthcare since August 2023. Still useful for AI citation on other sites; this skill emits a warning rather than refusing entirely.",
+    "QAPage": "RESTRICTED — community-Q&A only (Stack-Overflow-style sites). Generic commercial pages should not use this."
+  }
+}

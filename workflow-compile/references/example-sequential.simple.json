@@ -1,0 +1,32 @@
+{
+  "name": "Minimal Two-Step Workflow",
+  "description": "Smallest valid workflow: start -> researcher -> writer -> output.",
+  "start": {
+    "prompt": "Write a 200-word summary of recent breakthroughs in quantum error correction."
+  },
+  "agents": [
+    {
+      "id": "researcher",
+      "name": "Research Agent",
+      "description": "Gathers facts and citations on the requested topic.",
+      "provider": "openai",
+      "tools": [],
+      "instructions": "You are a research agent. Given a topic, return a bulleted list of verifiable facts with sources. Do not speculate."
+    },
+    {
+      "id": "writer",
+      "name": "Writer",
+      "description": "Turns the research bullets into a polished prose summary.",
+      "provider": "anthropic",
+      "tools": [],
+      "instructions": "You are a writer. You receive a bulleted research brief and return a polished prose summary of the requested length. Preserve every fact; do not add new ones.",
+      "max_tokens": 2048,
+      "temperature": 0.5
+    }
+  ],
+  "flow": [
+    ["start", "researcher"],
+    ["researcher", "writer"],
+    ["writer", "output"]
+  ]
+}
