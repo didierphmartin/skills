@@ -59,6 +59,19 @@ See [`references/example-newspaper.simple.json`](references/example-newspaper.si
 fan‑in) and [`references/example-sequential.simple.json`](references/example-sequential.simple.json)
 (linear).
 
+### Output: storage + format
+
+An optional top-level `output` block controls where the result is stored and in what format:
+
+```jsonc
+"output": { "store": true, "folder": "reports", "format": "pdf" }   // pdf | html | docx | md
+```
+
+- `store`/`folder` → the DSL's `output_storage_enabled` / `output_folder` (folder is a subfolder under the outputs root).
+- `format` (non-`md`) **auto-binds a formatter skill** on the terminal agent(s): `pdf → report-pdf`, `html → html`, `docx → docx`. An agent with its own `skill_binding` is left untouched.
+
+See `references/example-market-report.simple.json` / `.dsl.json`.
+
 ---
 
 ## 2. The graphical DSL
