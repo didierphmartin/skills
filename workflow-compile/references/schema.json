@@ -52,6 +52,16 @@
         "maxItems": 2,
         "items": { "type": "string", "minLength": 1 }
       }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional. Where/how the final result is stored. Compiled into output_storage_enabled / output_folder, and (for non-md formats) auto-binds a formatter skill on the terminal agent.",
+      "properties": {
+        "store":  { "type": "boolean", "default": false, "description": "Persist the result to disk." },
+        "folder": { "type": "string", "description": "Relative subfolder under the outputs root, e.g. \"reports\". No leading \"/\", no \"..\"." },
+        "format": { "type": "string", "enum": ["pdf", "html", "docx", "md"], "default": "md", "description": "Output format. pdf->report-pdf, html->html, docx->docx, md->raw." }
+      }
     }
   },
   "definitions": {
