@@ -1,0 +1,274 @@
+{
+  "name": "Market Report",
+  "description": "Parallel research on metals, cryptos, stocks, finance \u2192 a PDF report stored in reports.",
+  "definition": {
+    "runtime_mode": "batch",
+    "nodes": [
+      {
+        "id": "1",
+        "node_type": "start",
+        "type": "start",
+        "agent_id": null,
+        "agent_name": null,
+        "config": {
+          "agent_type": null,
+          "type": "start",
+          "prompt": "Produce a coherent market report: latest on metals, cryptos, stocks, and finance/macro.",
+          "documents": []
+        },
+        "position": {
+          "x": 61,
+          "y": 250
+        },
+        "pos_x": 61,
+        "pos_y": 250
+      },
+      {
+        "id": "2",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": null,
+        "agent_name": "Metals Researcher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [],
+          "agent_id": null,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "Metals Researcher",
+          "isTemplate": false,
+          "bound_skill": null,
+          "description": "",
+          "instructions": "Research metals; facts + sources.",
+          "output_schema": null,
+          "skill_content": "",
+          "agent_provider": "grok",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 391,
+          "y": -12
+        },
+        "pos_x": 391,
+        "pos_y": -12
+      },
+      {
+        "id": "3",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": null,
+        "agent_name": "Crypto Researcher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [],
+          "agent_id": null,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "Crypto Researcher",
+          "isTemplate": false,
+          "bound_skill": null,
+          "description": "",
+          "instructions": "Research crypto; confirmed news + sources.",
+          "output_schema": null,
+          "skill_content": "",
+          "agent_provider": "kimi",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 391,
+          "y": 162
+        },
+        "pos_x": 391,
+        "pos_y": 162
+      },
+      {
+        "id": "4",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": null,
+        "agent_name": "Stocks Researcher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [],
+          "agent_id": null,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "Stocks Researcher",
+          "isTemplate": false,
+          "bound_skill": null,
+          "description": "",
+          "instructions": "Research equities; key moves + sources.",
+          "output_schema": null,
+          "skill_content": "",
+          "agent_provider": "openai",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 391,
+          "y": 338
+        },
+        "pos_x": 391,
+        "pos_y": 338
+      },
+      {
+        "id": "5",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": null,
+        "agent_name": "Finance Researcher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [],
+          "agent_id": null,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "Finance Researcher",
+          "isTemplate": false,
+          "bound_skill": null,
+          "description": "",
+          "instructions": "Research macro/finance; key indicators + sources.",
+          "output_schema": null,
+          "skill_content": "",
+          "agent_provider": "gemini",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 391,
+          "y": 512
+        },
+        "pos_x": 391,
+        "pos_y": 512
+      },
+      {
+        "id": "6",
+        "node_type": "agent",
+        "type": "agent",
+        "agent_id": null,
+        "agent_name": "Report Publisher",
+        "config": {
+          "agent_type": "worker",
+          "type": "agent",
+          "model": "",
+          "tools": [],
+          "agent_id": null,
+          "settings": {
+            "max_tokens": 4096,
+            "temperature": 0.7
+          },
+          "agent_name": "Report Publisher",
+          "isTemplate": false,
+          "bound_skill": {
+            "id": "local:report-pdf",
+            "name": "report-pdf",
+            "source": "local",
+            "dir_name": "report-pdf"
+          },
+          "description": "",
+          "instructions": "Synthesize the four briefs into ONE coherent report (markdown): a section per topic + an executive summary.",
+          "output_schema": null,
+          "skill_content": "",
+          "agent_provider": "deepseek",
+          "merge_strategy": "labeled",
+          "output_schema_id": null
+        },
+        "position": {
+          "x": 721,
+          "y": 250
+        },
+        "pos_x": 721,
+        "pos_y": 250
+      },
+      {
+        "id": "7",
+        "node_type": "output",
+        "type": "output",
+        "agent_id": null,
+        "agent_name": null,
+        "config": {
+          "agent_type": null,
+          "type": "output"
+        },
+        "position": {
+          "x": 1051,
+          "y": 250
+        },
+        "pos_x": 1051,
+        "pos_y": 250
+      }
+    ],
+    "edges": [
+      {
+        "from": "1",
+        "to": "2",
+        "from_port": "output_1"
+      },
+      {
+        "from": "1",
+        "to": "3",
+        "from_port": "output_1"
+      },
+      {
+        "from": "1",
+        "to": "4",
+        "from_port": "output_1"
+      },
+      {
+        "from": "1",
+        "to": "5",
+        "from_port": "output_1"
+      },
+      {
+        "from": "2",
+        "to": "6",
+        "from_port": "output_1"
+      },
+      {
+        "from": "3",
+        "to": "6",
+        "from_port": "output_1"
+      },
+      {
+        "from": "4",
+        "to": "6",
+        "from_port": "output_1"
+      },
+      {
+        "from": "5",
+        "to": "6",
+        "from_port": "output_1"
+      },
+      {
+        "from": "6",
+        "to": "7",
+        "from_port": "output_1"
+      }
+    ]
+  },
+  "triggers": {
+    "schedule": {
+      "enabled": false
+    }
+  },
+  "output_storage_enabled": 1,
+  "output_folder": "reports"
+}

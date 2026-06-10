@@ -50,7 +50,7 @@ The compiler always emits these on agent nodes — they are not exposed in the s
 |---|---|
 | `definition.runtime_mode` | `"batch"` |
 | `triggers.schedule.enabled` | `false` |
-| `output_storage_enabled` | `0` |
-| `output_folder` | `null` |
+| `output_storage_enabled` | `0` (or `1` when the simple `output.store` is true) |
+| `output_folder` | `null` (or the simple `output.folder`) |
 
 The user can flip these in the editor after import.

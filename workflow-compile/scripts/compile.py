@@ -35,6 +35,37 @@ ALLOWED_PROVIDERS = {
     "openai", "anthropic", "kimi", "grok", "deepseek", "gemini",
 }
 
+FORMAT_SKILL = {"pdf": "report-pdf", "html": "html", "docx": "docx", "md": None}
+ALLOWED_FORMATS = set(FORMAT_SKILL)
+
+
+def validate_output(simple: dict) -> list[str]:
+    """Validate the optional top-level `output` block. Never raises — errors aggregated."""
+    out = simple.get("output")
+    if out is None:
+        return []
+    if not isinstance(out, dict):
+        return ['root: "output" must be an object']
+    errors: list[str] = []
+    fmt = out.get("format", "md")
+    if fmt not in ALLOWED_FORMATS:
+        errors.append(
+            f"output.format {fmt!r} is not allowed; use one of: "
+            + ", ".join(sorted(ALLOWED_FORMATS))
+        )
+    folder = out.get("folder")
+    if folder is not None:
+        if not isinstance(folder, str) or not folder.strip():
+            errors.append('output.folder must be a non-empty string')
+        elif folder.startswith("/") or ".." in folder.split("/"):
+            errors.append(
+                f'output.folder {folder!r} must be a safe relative path (no leading "/", no "..")'
+            )
+    if not isinstance(out.get("store", False), bool):
+        errors.append('output.store must be a boolean')
+    return errors
+
+
 # Path to the MCP catalog the app refreshes at startup. The file lists every
 # MCP function this user can call, with the `mcp_` prefix already applied.
 # Strict mode: any `mcp_*` reference in an agent's `tools` array that doesn't
@@ -474,7 +505,8 @@ def compile_workflow(simple: dict) -> dict:
     except FileNotFoundError as e:
         mcp_errors = [f"catalog: {e}"]
 
-    all_errors = schema_errors + graph_errors + mcp_errors
+    output_errors = validate_output(simple)
+    all_errors = schema_errors + graph_errors + mcp_errors + output_errors
     if all_errors:
         raise ValidationError(all_errors)
 
@@ -488,6 +520,15 @@ def compile_workflow(simple: dict) -> dict:
     for i, aid in enumerate(agent_ids, start=2):
         dsl_id[aid] = str(i)
     dsl_id["output"] = str(len(agent_ids) + 2)
+
+    # Optional output block: auto-bind a formatter skill on terminal agents (edge -> "output").
+    out_cfg = simple.get("output") or {}
+    formatter = FORMAT_SKILL.get(out_cfg.get("format", "md"))
+    if formatter:
+        terminal_ids = {f for f, t in flow if t == "output"}
+        for a in agents:
+            if isinstance(a, dict) and a.get("id") in terminal_ids and not a.get("skill_binding"):
+                a["skill_binding"] = formatter
 
     nodes = [build_start_node(dsl_id["start"], simple, positions["start"])]
     for a in agents:
@@ -508,8 +549,8 @@ def compile_workflow(simple: dict) -> dict:
             "edges": edges,
         },
         "triggers": {"schedule": {"enabled": False}},
-        "output_storage_enabled": 0,
-        "output_folder": None,
+        "output_storage_enabled": 1 if out_cfg.get("store", False) else 0,
+        "output_folder": (out_cfg.get("folder") or None),
     }
 
 

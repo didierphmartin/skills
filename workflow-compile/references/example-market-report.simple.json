@@ -1,0 +1,18 @@
+{
+  "name": "Market Report",
+  "description": "Parallel research on metals, cryptos, stocks, finance → a PDF report stored in reports.",
+  "start": { "prompt": "Produce a coherent market report: latest on metals, cryptos, stocks, and finance/macro." },
+  "output": { "store": true, "folder": "reports", "format": "pdf" },
+  "agents": [
+    { "id": "metals",  "name": "Metals Researcher",  "provider": "grok",     "tools": [], "instructions": "Research metals; facts + sources." },
+    { "id": "cryptos", "name": "Crypto Researcher",  "provider": "kimi",     "tools": [], "instructions": "Research crypto; confirmed news + sources." },
+    { "id": "stocks",  "name": "Stocks Researcher",  "provider": "openai",   "tools": [], "instructions": "Research equities; key moves + sources." },
+    { "id": "finance", "name": "Finance Researcher", "provider": "gemini",   "tools": [], "instructions": "Research macro/finance; key indicators + sources." },
+    { "id": "report",  "name": "Report Publisher",   "provider": "deepseek", "tools": [], "instructions": "Synthesize the four briefs into ONE coherent report (markdown): a section per topic + an executive summary." }
+  ],
+  "flow": [
+    ["start","metals"], ["start","cryptos"], ["start","stocks"], ["start","finance"],
+    ["metals","report"], ["cryptos","report"], ["stocks","report"], ["finance","report"],
+    ["report","output"]
+  ]
+}
