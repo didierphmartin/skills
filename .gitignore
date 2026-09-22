@@ -15,6 +15,11 @@ node_modules/
 scratch/
 outputs/
 
+# Working notes: design/plan documents kept beside the skills but not part of
+# what is published. Nothing in the collection reads them -- they reference
+# only each other.
+docs/
+
 # Secrets. A skill's .env holds real API keys (SerpAPI et al). Three of them
 # were committed in the initial import and sat in a PUBLIC repo for months --
 # the files even carried the comment "Gitignored — never commit this file",
