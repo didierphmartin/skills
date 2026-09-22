@@ -61,6 +61,32 @@ nothing and stays unbound. `create.py` prints each result as `BOUND`/`UNBOUND`, 
 what missed in at most two revisions, and anything still unbound is left deliberately — it becomes a
 human hand-off at run time rather than a wrong call.
 
+## How many turns this takes
+
+Two different things happen here, and only one of them loops.
+
+**The matching takes no turns at all.** `auto_bind()` is a single deterministic pass: tokenise the
+action, score every catalog tool, take the winner if it reaches 4 with no tie. No model, no
+iteration.
+
+**The naming can take up to three script runs**, and that loop is the model correcting *itself*:
+
+```
+draft JSON → create.py → (revise → create.py) → (revise → create.py) → save_playbook_agent
+```
+
+Each run is a `run_skill_script` call inside the **same** assistant turn, so from the user's side
+this is one request and one answer — nobody is asked anything mid-way unless the playbook itself
+calls for a `#Trigger Form`.
+
+The two-revision cap is deliberate. The two failure kinds are not equal: exit 1 (a syntax error or
+an action missing from the list) **must** be fixed, while `UNBOUND` is advisory — so most drafts
+converge on the first or second run. After two revisions the skill saves anyway and reports what
+stayed unbound, because an unbound action is not a failure: at run time it becomes a human hand-off.
+Looping further would trade a working playbook for a cosmetically cleaner one, and would tempt the
+model into renaming a genuinely novel action just to silence the report — turning "no tool for this"
+into a confident call to the wrong one.
+
 ## Pipeline
 
 model drafts JSON → `scripts/create.py` renders the canonical text, checks the action list and
