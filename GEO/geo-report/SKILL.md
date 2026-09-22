@@ -1,6 +1,6 @@
 ---
 name: geo-report
-description: "Aggregate every GEO audit in ~/Documents/synergyAI/outputs/ into a single client-ready GEO Readiness Report. Use for: 'GEO report', 'client report', 'consolidate audits', 'final GEO report', 'GEO deliverable', 'put it all together', 'GEO score summary', 'composite GEO score', 'audit summary for client'. Pipeline: gather all GEO-*.md / GEO-*-ANALYSIS.md / hand-written summaries from the outputs folder -> extract every numeric score marker -> hand the LLM the file inventory plus per-file content (truncated if huge) plus the score-marker rollup. The LLM then computes the composite GEO Readiness Score (Platform 25% + Content 25% + Technical 20% + Schema 15% + Brand 15%) and writes the full 12-section client report following the template in this SKILL — executive summary, GEO dashboard, AI crawler status, brand authority, citability, technical health, schema, llms.txt status, prioritized action plan, competitor comparison if available, appendix."
+description: "Aggregate every GEO audit in ~/Documents/synergyAI/outputs/ into a single client-ready GEO Readiness Report. Use for: 'GEO report', 'client report', 'consolidate audits', 'final GEO report', 'GEO deliverable', 'put it all together', 'GEO score summary', 'composite GEO score', 'audit summary for client'. Pipeline: gather all GEO-*.md / GEO-*-ANALYSIS.md / hand-written summaries from the outputs folder -> extract every numeric score marker -> hand the LLM the file inventory plus per-file content (truncated if huge) plus the score-marker rollup. The SCRIPT computes the composite GEO Readiness Score deterministically (weighted components defined in gather_audits.py; pass prose-only subscores via --score) and the LLM writes the full 12-section client report around it following the template in this SKILL — executive summary, GEO dashboard, AI crawler status, brand authority, citability, technical health, schema, llms.txt status, prioritized action plan, competitor comparison if available, appendix."
 dependencies: []
 fetches_urls: false
 ---
@@ -37,8 +37,20 @@ prioritized actions.
 >   (e.g. "run `geo-technical` and `geo-content` for a complete report") and
 >   write a **partial** report covering only the dimensions you have data
 >   for, rather than fabricating the missing ones.
-> - The composite GEO Readiness Score is computed **from the scores in the
->   files** using the component weights below. If a component is missing,
+> - The composite GEO Readiness Score is COMPUTED BY THE SCRIPT — read it
+>   from the "Composite GEO Readiness Score (COMPUTED — use verbatim)"
+>   section of the script output and use that exact number and tier. Never
+>   compute, estimate, round, or "adjust" a composite yourself. (History:
+>   LLM-computed composites converged on 71/100 for every site audited —
+>   an attractor value, not a measurement.)
+> - When upstream audit outputs contain scores that are NOT yet in files
+>   (e.g. dimension scores you or other agents just produced in prose),
+>   pass them explicitly: rerun the script as
+>   `gather_audits.py --score citability=64 --score content=72 ...`
+>   (components: crawlers, citability, content, technical, schema,
+>   platform). Explicit scores override stale file markers.
+> - If the script reports INSUFFICIENT DATA, do NOT print any composite —
+>   state which audits are missing instead. For a missing single component,
 >   say "[N/A — audit not run]" in the breakdown rather than guessing.
 
 ## Invocation — exact argv shapes
@@ -206,6 +218,36 @@ The script prints the **gathered audit inventory + per-file content + score
 rollup to stdout** — your synthesis input. You write the consolidated
 client report to `GEO-CLIENT-REPORT.md` in `~/Documents/synergyAI/outputs/`
 (`/outputs/` in Pyodide) — typically 3,000-6,000 words, ready to send.
+
+## HTML deliverable — share-ready rules (MANDATORY when you output HTML)
+
+This report is routinely shared as an **email attachment** or over **WhatsApp**.
+Those viewers sanitize HTML: they strip `<style>`, `<head>`, `<script>`, and
+external `<link>`, often don't support CSS custom properties, and don't run
+JavaScript. A report that only renders in a full browser is a **failed
+deliverable**. So when you produce the report as an `.html` file, it MUST be
+fully self-contained and render correctly with **no network and no JavaScript**:
+
+1. **No external resources.** No `<link>` to Google Fonts or any CDN; no remote
+   CSS/JS/images. Use a system font stack
+   (`font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;`).
+   Embed any image as a `data:` URI or omit it.
+2. **No CSS variables.** Never use `var(--…)`; write literal color/size values.
+   Many mail/preview renderers leave `var()` unresolved → broken colors/layout.
+3. **All content visible without JavaScript.** Never gate visibility on JS — no
+   `opacity:0` + scroll-reveal, no JS counters, no JS-filled gauges/bars. Set
+   every element's final, visible state statically. A gauge/bar must show its
+   final value as authored (e.g. bake the `stroke-dashoffset`, set the bar
+   `width` inline).
+4. **Inline the critical styles** as `style="…"` on the elements (email clients
+   keep inline styles but drop `<style>`). Keep only `@media` and `:hover` rules
+   in a single `<style>` as progressive enhancement.
+5. **No `<script>`.** Prefer omitting JS entirely. Any enhancement must degrade
+   gracefully and never be required to see content.
+
+Self-test before saving: *"If `<style>` were removed, CSS variables unsupported,
+and JavaScript off, is every section still readable and correctly colored?"* If
+not, fix it before writing the file.
 
 ## Pyodide notes
 

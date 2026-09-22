@@ -63,6 +63,23 @@ a specific input set, with synthesis at the end.
 > ✅ Correct: `{ "dir_name": "geo-content", "script": "scripts/content_signals.py", "argv": ["https://example.com"] }`
 > ❌ Wrong:   adding `"read_outputs": ["/outputs/GEO-CONTENT-ANALYSIS.md", ...]`
 >
+> ## 🚦 RUN EACH SUB-SKILL EXACTLY ONCE — THEN ADVANCE
+>
+> This is the single most important rule for finishing the audit. **Each
+> sub-skill is run ONCE.** As soon as a sub-skill's `run_skill_script` returns
+> with `exit_code = 0` and a report in stdout, that dimension is **DONE** — its
+> stdout report (and the `*-EXTRACT.md` it wrote) is everything you need.
+>
+> - **NEVER re-run a sub-skill you have already run** in this turn. A successful
+>   run that returned a report is complete even if the tool result shows no
+>   `outputs` — the data is in **stdout**. Re-running it is the #1 cause of the
+>   audit looping until the round budget halts it.
+> - After Phase 1 (the 6 domain/homepage extracts) and Phase 2 (citability)
+>   have each run once, **immediately call `geo-report`** (Phase 4) to
+>   consolidate — do NOT loop back and re-run any extract.
+> - Track what you've already run. Your progression is strictly:
+>   Phase 1 → Phase 2 → `geo-report` → write the final report. Never backwards.
+>
 > ## ✅ REQUIRED FIRST STEP — RUN THE SUB-SKILLS IN SEQUENCE (FALLBACK)
 >
 > When the user asks for a full GEO audit / complete audit / soup-to-nuts

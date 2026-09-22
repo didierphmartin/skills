@@ -81,6 +81,43 @@ def apply_patch_to_body(skill_md, edits, lr_budget=3):
     return join_skill_md(fm, slow, new_body), blocked + body_skipped
 
 
+def apply_patches_to_corpus(corpus, edits, lr_budget=3):
+    """Apply per-file edits across a skill's markdown corpus.
+
+    corpus: {relpath: content}, e.g. {"SKILL.md": ..., "references/x.md": ...}.
+    Each edit may carry a "file" key (default "SKILL.md"). SKILL.md edits are
+    body-protected (frontmatter + SLOW_UPDATE untouched); reference files are
+    plain markdown. `lr_budget` is GLOBAL across all files.
+
+    Returns (new_corpus, skipped, applied_count).
+    """
+    by_file = {}
+    skipped = []
+    for e in edits:
+        f = e.get("file") or "SKILL.md"
+        if f not in corpus:
+            skipped.append({"edit": e, "reason": f"unknown file {f!r}"}); continue
+        by_file.setdefault(f, []).append(e)
+    new_corpus = dict(corpus)
+    remaining = lr_budget
+    applied_total = 0
+    for f, fedits in by_file.items():
+        if remaining <= 0:
+            for e in fedits:
+                skipped.append({"edit": e, "reason": f"over lr_budget ({lr_budget})"})
+            continue
+        if f == "SKILL.md":
+            new_text, sk = apply_patch_to_body(corpus[f], fedits, lr_budget=remaining)
+        else:
+            new_text, sk = apply_patch(corpus[f], fedits, lr_budget=remaining)
+        new_corpus[f] = new_text
+        skipped.extend(sk)
+        applied_this = len(fedits) - len(sk)
+        applied_total += applied_this
+        remaining -= applied_this
+    return new_corpus, skipped, applied_total
+
+
 if __name__ == "__main__":
     S = """---
 name: demo
@@ -109,4 +146,16 @@ Body text.
     _, skipped = apply_patch_to_body(S, [{"op":"append","content":"X"},{"op":"append","content":"Y"},{"op":"append","content":"Z"}], lr_budget=2)
     assert len([s for s in skipped if "lr_budget" in s.get("reason","")]) == 1
     print("PASS: lr_budget clip")
+    # corpus: edit a reference file + SKILL.md body in one call
+    corpus = {"SKILL.md": S, "references/vocab.md": "# Vocab\n\nbad term here.\n"}
+    nc, sk, ap = apply_patches_to_corpus(corpus, [
+        {"file": "references/vocab.md", "op": "replace", "target": "bad term here.", "content": "good term."},
+        {"op": "replace", "target": "Body text.", "content": "Body 2."},
+    ], lr_budget=3)
+    assert "good term." in nc["references/vocab.md"]
+    assert "Body 2." in nc["SKILL.md"] and "PROTECTED" in nc["SKILL.md"] and ap == 2
+    print("PASS: corpus multi-file patch")
+    nc2, sk2, _ = apply_patches_to_corpus(corpus, [{"file": "references/nope.md", "op": "append", "content": "x"}])
+    assert any("unknown file" in s.get("reason", "") for s in sk2)
+    print("PASS: corpus unknown-file guard")
     print("\nAll patch.py self-tests pass.")

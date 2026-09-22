@@ -197,7 +197,7 @@ def parse_llmstxt(text: str) -> dict:
         # H2 section header
         if stripped.startswith("## "):
             section_name = stripped[3:].strip()
-            current_section = {"name": section_name, "entries": [], "line": i}
+            current_section = {"name": section_name, "entries": [], "line": i, "has_prose": False}
             sections.append(current_section)
             in_key_facts = (section_name.lower() == "key facts")
             in_contact = (section_name.lower() == "contact")
@@ -234,6 +234,13 @@ def parse_llmstxt(text: str) -> dict:
             else:
                 contact.append(bullet)
             continue
+
+        # Any other non-blank line within a section is prose/narrative body
+        # (the About paragraph, a prose Contact line, an H3 sub-heading, a
+        # Usage-Guidelines bullet). Track it so 0-entry prose sections aren't
+        # mislabeled "empty" downstream and unfairly penalized in scoring.
+        if current_section is not None and stripped:
+            current_section["has_prose"] = True
 
     if title is None:
         warnings.append("missing H1 title on the first non-empty line")
@@ -417,7 +424,15 @@ def render(result: dict) -> str:
             "",
         ]
         for s in p['sections']:
-            L.append(f"### Section: {s['name']} ({len(s['entries'])} entries)")
+            _n = len(s['entries'])
+            # Prose sections (About, Usage Guidelines, Contact, Content License)
+            # legitimately hold narrative text, not `- [link]` entries. Label
+            # them as prose so the scoring LLM doesn't treat "0 entries" as an
+            # empty/broken section.
+            _label = f"{_n} entries" if _n else (
+                "prose/narrative section — no link entries (valid)"
+                if s.get('has_prose') else "empty — no entries or prose")
+            L.append(f"### Section: {s['name']} ({_label})")
             for e in s['entries'][:8]:
                 desc_words = len(re.findall(r"\b\w+\b", e['description']))
                 L.append(f"- [{e['title']}]({e['url']}) — "
@@ -465,6 +480,16 @@ def render(result: dict) -> str:
 
         # Spec checklist
         L += ["## Spec checklist", ""]
+        # "Section present" must test whether the H2 HEADING exists, not whether
+        # the section happens to contain `- ` bullets. A Contact/Key-Facts
+        # section written as prose (e.g. "For inquiries, visit … LinkedIn") is
+        # perfectly valid, but its bullet list parses empty — the old
+        # `bool(p['contact'])` check then wrongly reported "Contact: ❌ fail"
+        # even though `## Contact` was right there. We also accept "About" as
+        # the Key-Facts-equivalent orientation section.
+        _section_names = {(s.get('name') or '').strip().lower() for s in p.get('sections', [])}
+        _has_key_facts = bool(p['key_facts']) or 'key facts' in _section_names or 'about' in _section_names
+        _has_contact = bool(p['contact']) or 'contact' in _section_names
         checks = [
             ("H1 title present", bool(p['title']), "Critical"),
             ("Blockquote description present", bool(p['description']), "High"),
@@ -473,8 +498,8 @@ def render(result: dict) -> str:
             ("At least one H2 section", p['section_count'] >= 1, "Critical"),
             ("Total entries 10-30", 10 <= p['total_entries'] <= 30, "Medium"),
             ("Line count 30-200", 30 <= p['line_count'] <= 200, "Low"),
-            ("Key Facts section present", bool(p['key_facts']), "Medium"),
-            ("Contact section present", bool(p['contact']), "Low"),
+            ("Key Facts section present", _has_key_facts, "Medium"),
+            ("Contact section present", _has_contact, "Low"),
             ("All URLs absolute", not v['relative_or_malformed_urls'], "High"),
             ("All entries have descriptions", not v['missing_descriptions'], "Medium"),
         ]

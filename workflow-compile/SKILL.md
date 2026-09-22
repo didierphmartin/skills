@@ -6,6 +6,8 @@ metadata:
   version: 0.1.0
   origin: synergyAI custom
 allowed-tools: run_skill_script
+context-references: references/mcp-catalog.md
+inject-default-provider: true
 ---
 
 # workflow-compile
@@ -34,12 +36,13 @@ The user then imports the DSL into the workflow editor (or, later, the skill wil
 ## Step-by-step
 
 1. **Write the simplified JSON** to `/scratch/<name>.simple.json` based on the user's request. Use the shape in [References](#references) below.
-2. **Call `run_skill_script`** with:
+2. **Assign MCP tools per agent.** For each agent, consult `references/mcp-catalog.md` and populate its `tools` array with every function whose description matches the agent's task (see [Tools](#tools--match-each-agent-to-the-mcp-functions-it-needs)). This is where a workflow gets its live-data capability — don't skip it.
+3. **Call `run_skill_script`** with:
    - `script_path`: `scripts/compile.py`
    - `argv`: `["-i", "/scratch/<name>.simple.json", "-o", "/outputs/<name>.json"]`
    - `read_outputs`: `["/outputs/<name>.json"]`
-3. **If it errors**, read the aggregated error list, rewrite the simplified JSON, call again. The error messages name the exact field and the fix.
-4. **On success**, briefly tell the user the workflow has been saved and summarize the graph (1–3 bullets: number of agents, providers used, fan-out/fan-in structure). Don't paste the DSL.
+4. **If it errors**, read the aggregated error list, rewrite the simplified JSON, call again. The error messages name the exact field and the fix.
+5. **On success**, briefly tell the user the workflow has been saved and summarize the graph (1–3 bullets: number of agents, providers used, fan-out/fan-in structure). Don't paste the DSL.
 
 ## The simplified language
 
@@ -56,11 +59,11 @@ The user then imports the DSL into the workflow editor (or, later, the skill wil
       "id": "researcher",           // required — referenced by flow edges; NOT "start" or "output"
       "name": "Research Agent",     // required — display name
       "description": "...",         // optional
-      "provider": "openai",         // required — one of: openai, anthropic, kimi, grok, deepseek, gemini
-                                    //   (anthropic = Claude; these are the ONLY supported providers)
+      "provider": "deepseek",       // required — use the "Default provider" from the directive at the END of this skill unless the user names one
+                                    //   allowed: openai, anthropic (=Claude), kimi, grok, deepseek, gemini — the ONLY supported providers
       "instructions": "...",        // required — system prompt
       "skill": "...",               // optional — inline procedure / output-format guidance
-      "tools": [],                  // optional — every entry must appear verbatim in references/mcp-catalog.md (strict-all)
+      "tools": [],                  // attach MCP functions matching this agent's task (see Tools); each entry must appear verbatim in references/mcp-catalog.md
       "skill_binding": "medium-format",  // optional — bind a folder-backed skill (string = dir_name)
       "agent_template_id": null,    // optional — int, if binding to an existing template
       "model": "",                  // optional — empty lets the engine pick the default
@@ -92,21 +95,31 @@ The user then imports the DSL into the workflow editor (or, later, the skill wil
 
 You don't need to declare these — just write the edges; the compiler infers parallelism and merging from the graph shape.
 
-### Function names in `tools` — STRICT allowlist
+### Tools — match each agent to the MCP functions it needs
 
-The `tools` array on each agent may contain function names. **The compiler enforces a strict allowlist** against `references/mcp-catalog.md` (auto-refreshed at app startup). The catalog is the **sole source of truth** for what's valid.
+**This is a first-class authoring step, not an afterthought.** An agent without the right tools can only guess from training data; an agent with them pulls live data. For **every** agent, do this before compiling:
 
-- **Read `references/mcp-catalog.md` first.** It lists every function this user can call, with the mandatory `mcp_` prefix already applied (e.g. `mcp_search_arxiv`, `mcp_pubmed_search`, `mcp_get_crypto_news`).
-- **Every entry in `tools` must appear verbatim in the catalog.** Copy the names exactly — prefix included.
-- **If no listed function fits the agent's job, leave `tools: []` empty.** A clean empty array is always valid and is the right answer when no catalog function applies.
-- **Inventing names is forbidden — with or without the `mcp_` prefix.** Generic guesses like `mcp_search`, `web_search`, `api_call`, `data_retrieval`, `mcp_lookup` are all rejected by the compiler. There is no escape hatch via dropping the prefix — the catalog is the only authority.
-- The platform does **not** have built-in non-MCP tools that are universally available across providers. If you want a function, it must come from the catalog.
+1. **Read `references/mcp-catalog.md`.** It groups every function this user can call under its server, each with a description and the exact `mcp_`-prefixed identifier (e.g. `mcp_battery_news_get_all`, `mcp_pubmed_search`, `mcp_get_crypto_news`).
+2. **Match the agent's job to the tool descriptions and attach what fits.** A battery agent gets the battery functions; a biomedical/PubMed agent gets the pubmed functions; a metals agent gets the metals functions. Attach *every* function whose description fits the agent's task — copy the identifier **verbatim**, `mcp_` prefix included.
+3. **Leave `tools: []` empty ONLY when the catalog genuinely has nothing relevant** to that agent (a pure writing/formatting agent, or a topic no server covers). Empty is valid, but it must be a deliberate "nothing fits" — never the lazy default.
 
-The compiler error you'll see on a mismatch:
+Example — a battery-research agent and a biomedical-research agent:
+```jsonc
+{ "id": "battery_researcher", "name": "Battery Researcher", "provider": "deepseek",
+  "instructions": "Research the latest battery and EV developments…",
+  "tools": ["mcp_battery_news_get_all", "mcp_battery_news_search"] },
+{ "id": "biomed_researcher", "name": "Biomedical Researcher", "provider": "anthropic",
+  "instructions": "Find peer-reviewed research on the topic…",
+  "tools": ["mcp_pubmed_search", "mcp_pubmed_build_query"] }
+```
+
+**Hard rules (the compiler enforces these):**
+- Every entry in `tools` must appear **verbatim** in `references/mcp-catalog.md` — `mcp_` prefix and all.
+- **Inventing names is forbidden — with or without the `mcp_` prefix.** Generic guesses like `mcp_search`, `web_search`, `api_call`, `data_retrieval`, `mcp_lookup` are all rejected. There is no escape hatch via dropping the prefix — the catalog is the only authority, and there is no non-MCP built-in tool set.
+- On a mismatch the compiler names the closest real entries — pick one, or leave the array empty:
 ```
 agents[i] 'x': tool 'mcp_search' is not in the MCP catalog. Did you mean: mcp_search_arxiv, mcp_pubmed_search, mcp_search_metals_news?
 ```
-The suggestions are real catalog entries — pick one (or none) and recompile.
 
 ### `skill` vs `skill_binding` — important distinction
 

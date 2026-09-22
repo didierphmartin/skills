@@ -2,7 +2,7 @@
 """Closed-loop body optimizer. Baseline -> propose -> re-eval -> strict gate."""
 import argparse, asyncio, json, sys, time
 from pathlib import Path
-from scripts.improve_body import improve_body
+from scripts.improve_body import improve_body, _read_corpus
 from scripts.run_body_eval import run_body_eval
 from scripts.utils import parse_skill_md
 
@@ -32,19 +32,32 @@ def _detect_regressions(best_results, new_results):
 
 async def run_body_loop(eval_set, skill_path, num_workers, timeout, max_iterations, lr_budget,
                         soft_threshold, model, provider, verbose, strict_gate=True, log_dir=None,
-                        runs_per_query=3):
+                        runs_per_query=3, proposer_model=None, proposer_provider=None,
+                        judge_model=None, judge_provider=None):
+    # Three-role split (each defaults to model/provider → old single-model behaviour):
+    #   model / provider           → EVALUATOR: runs the skill (use the TARGET/failing provider)
+    #   proposer_model / provider  → PROPOSER:  rewrites SKILL.md (a strong model)
+    #   judge_model / provider     → JUDGE:     scores transcripts (a cheap, reliable model)
+    proposer_model = proposer_model or model
+    proposer_provider = proposer_provider or provider
+    judge_model = judge_model or model
+    judge_provider = judge_provider or provider
     skill_name, _, _ = parse_skill_md(skill_path)
-    skill_md_path = skill_path / "SKILL.md"
-    original_skill_md = skill_md_path.read_text()
-    (skill_path / "SKILL.md.preopt.bak").write_text(original_skill_md)
+    # Corpus = SKILL.md + references/*.md. The proposer may edit any of them;
+    # we back up and revert per file.
+    original_corpus = _read_corpus(skill_path)
+    for relpath, content in original_corpus.items():
+        bak = skill_path / (relpath + ".preopt.bak")
+        bak.parent.mkdir(parents=True, exist_ok=True)
+        bak.write_text(content)
     if log_dir: log_dir.mkdir(parents=True, exist_ok=True)
     if verbose:
         print(f"\n{'='*60}\nBody loop - {skill_name}\n  max_iter={max_iterations} lr_budget={lr_budget} strict={strict_gate} soft>={soft_threshold} runs_per_query={runs_per_query}\n{'='*60}", file=sys.stderr)
 
     t0 = time.time()
-    baseline = await run_body_eval(eval_set, skill_path, None, num_workers, timeout, model, provider, soft_threshold, runs_per_query=runs_per_query)
+    baseline = await run_body_eval(eval_set, skill_path, None, num_workers, timeout, model, provider, soft_threshold, runs_per_query=runs_per_query, judge_model=judge_model, judge_provider=judge_provider)
     baseline_elapsed = time.time() - t0
-    best_skill_md = original_skill_md
+    best_corpus = dict(original_corpus)
     best_results = baseline["results"]
     best_score = baseline["summary"]["overall_passed"]
     total_body = baseline["summary"]["total_body_cases"]
@@ -59,7 +72,7 @@ async def run_body_loop(eval_set, skill_path, num_workers, timeout, max_iteratio
     exit_reason = "unknown"
     if baseline["summary"]["strict_all_pass"]:
         exit_reason = "baseline_already_passes"
-        return _build_return(exit_reason, baseline, history, rejected, best_score, total_body, original_skill_md, best_skill_md)
+        return _build_return(exit_reason, baseline, history, rejected, best_score, total_body, original_corpus, best_corpus)
 
     for iteration in range(1, max_iterations + 1):
         if verbose: print(f"\n--- iteration {iteration}/{max_iterations} ---", file=sys.stderr)
@@ -69,7 +82,7 @@ async def run_body_loop(eval_set, skill_path, num_workers, timeout, max_iteratio
 
         t0 = time.time()
         patch_result = await improve_body(skill_path=skill_path, failure_patterns=failure_patterns,
-                                          model=model, provider=provider, lr_budget=lr_budget,
+                                          model=proposer_model, provider=proposer_provider, lr_budget=lr_budget,
                                           rejected_edits=rejected)
         improve_elapsed = time.time() - t0
         if log_dir:
@@ -88,10 +101,11 @@ async def run_body_loop(eval_set, skill_path, num_workers, timeout, max_iteratio
             if verbose: print(f"  REJECT: no-op patch", file=sys.stderr)
             continue
 
-        candidate = patch_result["after"]
-        skill_md_path.write_text(candidate)
+        changed_files = patch_result.get("changed_files", {})
+        for relpath, content in changed_files.items():
+            (skill_path / relpath).write_text(content)
         t0 = time.time()
-        new_eval = await run_body_eval(eval_set, skill_path, None, num_workers, timeout, model, provider, soft_threshold, runs_per_query=runs_per_query)
+        new_eval = await run_body_eval(eval_set, skill_path, None, num_workers, timeout, model, provider, soft_threshold, runs_per_query=runs_per_query, judge_model=judge_model, judge_provider=judge_provider)
         eval_elapsed = time.time() - t0
         if log_dir: (log_dir / f"{iteration:02d}-eval.json").write_text(json.dumps(new_eval, indent=2))
 
@@ -106,12 +120,15 @@ async def run_body_loop(eval_set, skill_path, num_workers, timeout, max_iteratio
         accept = (improvement >= 0 and not regressions) if strict_gate else (improvement > 0)
 
         if accept:
-            best_skill_md = candidate
+            best_corpus.update(changed_files)
             best_results = new_eval["results"]
             best_score = new_score
-            if verbose: print(f"  GATE ACCEPT: {new_score}/{total_body} (delta=+{improvement})", file=sys.stderr)
+            if verbose:
+                files = ", ".join(changed_files.keys())
+                print(f"  GATE ACCEPT: {new_score}/{total_body} (delta=+{improvement}) [{files}]", file=sys.stderr)
         else:
-            skill_md_path.write_text(best_skill_md)
+            for relpath in changed_files:
+                (skill_path / relpath).write_text(best_corpus[relpath])
             rejected.append({"iteration": iteration, "patch": patch_result["patch"],
                              "score_delta": improvement, "regressions": regressions,
                              "candidate_score": new_score, "best_score_at_attempt": best_score})
@@ -134,20 +151,22 @@ async def run_body_loop(eval_set, skill_path, num_workers, timeout, max_iteratio
             exit_reason = f"max_iterations ({max_iterations})"; break
 
     if exit_reason == "unknown": exit_reason = f"loop_exited (iter {max_iterations})"
-    return _build_return(exit_reason, baseline, history, rejected, best_score, total_body, original_skill_md, best_skill_md)
+    return _build_return(exit_reason, baseline, history, rejected, best_score, total_body, original_corpus, best_corpus)
 
 
-def _build_return(exit_reason, baseline, history, rejected, best_score, total_body, original_skill_md, best_skill_md):
+def _build_return(exit_reason, baseline, history, rejected, best_score, total_body, original_corpus, best_corpus):
     accepted = [h for h in history if h.get("phase") == "iteration" and h.get("accepted")]
     iter_runs = sum(1 for h in history if h.get("phase") == "iteration")
+    changed = [f for f in best_corpus if best_corpus.get(f) != original_corpus.get(f)]
     return {"exit_reason": exit_reason, "skill_name": baseline["skill_name"],
             "baseline_score": f"{baseline['summary']['overall_passed']}/{total_body}",
             "best_score": f"{best_score}/{total_body}",
             "net_improvement": best_score - baseline["summary"]["overall_passed"],
             "iterations_run": iter_runs, "iterations_accepted": len(accepted),
             "iterations_rejected": len(rejected), "rejected_body_edits": rejected,
-            "preopt_backup_path": "SKILL.md.preopt.bak",
-            "body_changed": best_skill_md != original_skill_md, "history": history}
+            "preopt_backup_path": "<file>.preopt.bak (one per changed file)",
+            "changed_files": changed,
+            "body_changed": len(changed) > 0, "history": history}
 
 
 def main():
@@ -159,6 +178,10 @@ def main():
     p.add_argument("--provider", default="claude"); p.add_argument("--lenient-gate", action="store_true")
     p.add_argument("--runs-per-query", type=int, default=3, help="Run each eval case N times and majority-vote, to denoise LLM variance (default 3). Lower to 1 for a fast/cheap but noisy run.")
     p.add_argument("--results-dir", default=None); p.add_argument("--verbose", action="store_true")
+    # Three-role split (each defaults to --model/--provider): proposer rewrites,
+    # the judge scores; --model/--provider remain the evaluator (runs the skill).
+    p.add_argument("--proposer-model", default=None); p.add_argument("--proposer-provider", default=None)
+    p.add_argument("--judge-model", default=None); p.add_argument("--judge-provider", default=None)
     args = p.parse_args()
     asyncio.run(_async_main(args))
 
@@ -227,7 +250,9 @@ async def _async_main(args):
                               args.max_iterations, args.lr_budget, args.soft_threshold,
                               args.model, args.provider, args.verbose,
                               strict_gate=not args.lenient_gate, log_dir=log_dir,
-                              runs_per_query=args.runs_per_query)
+                              runs_per_query=args.runs_per_query,
+                              proposer_model=args.proposer_model, proposer_provider=args.proposer_provider,
+                              judge_model=args.judge_model, judge_provider=args.judge_provider)
     print(json.dumps(out, indent=2))
     if results_dir:
         (results_dir / "results.json").write_text(json.dumps(out, indent=2))

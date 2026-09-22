@@ -98,7 +98,12 @@ async def _judge_softly(query, transcript, expectations, model, provider, timeou
     return {"score": 0, "per_expectation": [], "reasoning": "judge returned unparseable response"}
 
 
-async def run_body_eval(eval_set, skill_path, skill_description, num_workers, timeout, model, provider, soft_threshold=4, runs_per_query=1):
+async def run_body_eval(eval_set, skill_path, skill_description, num_workers, timeout, model, provider, soft_threshold=4, runs_per_query=1, judge_model=None, judge_provider=None):
+    # Three-role split: `model`/`provider` RUN the skill (evaluator/target —
+    # ideally the provider that's actually failing). The JUDGE that scores the
+    # transcript can be a separate, cheaper model. Defaults keep old behaviour.
+    judge_model = judge_model or model
+    judge_provider = judge_provider or provider
     skill_name, original_description, _ = parse_skill_md(skill_path)
     description = skill_description or original_description
     script_paths = []
@@ -122,7 +127,7 @@ async def run_body_eval(eval_set, skill_path, skill_description, num_workers, ti
             for _ in range(n_runs):
                 tr = await _capture_transcript(case["query"], skill_name, description, script_paths, model, provider, timeout)
                 hp, hf = _check_hard_gate(tr, case.get("must_contain", []), case.get("must_not_contain", []))
-                judge = await _judge_softly(case["query"], tr, case.get("expectations", []), model, provider, timeout)
+                judge = await _judge_softly(case["query"], tr, case.get("expectations", []), judge_model, judge_provider, timeout)
                 runs.append({"hard_pass": hp, "hard_failures": hf,
                              "soft_score": judge.get("score", 0),
                              "soft_reasoning": judge.get("reasoning", ""), "transcript": tr})
@@ -159,6 +164,8 @@ def main():
     p.add_argument("--timeout", type=int, default=60); p.add_argument("--model", required=True)
     p.add_argument("--provider", default="claude"); p.add_argument("--soft-threshold", type=int, default=4)
     p.add_argument("--runs-per-query", type=int, default=1, help="Run each case N times and majority-vote to denoise (default 1)")
+    p.add_argument("--judge-model", default=None, help="Model that SCORES transcripts (defaults to --model)")
+    p.add_argument("--judge-provider", default=None, help="Provider for the judge (defaults to --provider)")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
     eval_set = json.loads(Path(args.eval_set).read_text())
@@ -167,7 +174,8 @@ def main():
         print(f"No SKILL.md at {skill_path}", file=sys.stderr); sys.exit(1)
     out = asyncio.run(run_body_eval(eval_set, skill_path, args.description, args.num_workers,
                                      args.timeout, args.model, args.provider, args.soft_threshold,
-                                     runs_per_query=args.runs_per_query))
+                                     runs_per_query=args.runs_per_query,
+                                     judge_model=args.judge_model, judge_provider=args.judge_provider))
     if args.verbose:
         s = out["summary"]
         print(f"Body eval: {s['overall_passed']}/{s['total_body_cases']} pass (hard {s['hard_passed']}, avg {s['avg_soft_score']}/5, {s['skipped_cases']} skipped)", file=sys.stderr)

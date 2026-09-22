@@ -42,6 +42,8 @@ SCORE_PATTERNS = [
     ("Content Score",             re.compile(r"Content Score:\s*\**\s*(\d+)\s*/\s*100", re.I)),
     ("Technical Score",           re.compile(r"Technical Score:\s*\**\s*(\d+)\s*/\s*100", re.I)),
     ("Schema Score",              re.compile(r"Schema Score:\s*\**\s*(\d+)\s*/\s*100", re.I)),
+    ("Platform Score",            re.compile(r"Platform(?:\s+Optimization)?\s+Score:\s*\**\s*(\d+)\s*/\s*100", re.I)),
+    ("Brand Authority Score",     re.compile(r"Brand Authority Score:\s*\**\s*(\d+)\s*/\s*100", re.I)),
     ("Combined GEO Score",        re.compile(r"Combined GEO Score:\s*\**\s*(\d+)\s*/\s*100", re.I)),
     ("Overall GEO Score",         re.compile(r"(?:Overall\s+)?GEO Score:\s*\**\s*(\d+)\s*/\s*100", re.I)),
     ("Tier 1 accessible",         re.compile(r"Tier\s*1\s+accessible:\s*\**\s*(\d+)\s*/\s*5", re.I)),
@@ -68,6 +70,64 @@ SOURCE_SKILL_FROM_NAME = [
     (re.compile(r"SCHEMA",    re.I),  "geo-schema"),
     (re.compile(r"COMPARE|DELTA|MONTHLY", re.I), "geo-compare"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Composite score — COMPUTED HERE, deterministically.
+#
+# History: the composite used to be "computed" by the LLM from the rollup,
+# and it converged on the attractor value 71 for every site audited (five
+# reports, ≥2 different domains, all 71/100). Arithmetic belongs in the
+# script; the LLM's job is the narrative. The report template must use the
+# value below VERBATIM.
+# ---------------------------------------------------------------------------
+
+# component → (marker label in SCORE_PATTERNS, weight). Weights renormalize
+# over the components actually present. llms.txt has no 0-100 score marker
+# and is reported qualitatively, outside the composite.
+COMPOSITE_COMPONENTS = {
+    "geo-crawlers":            ("AI Visibility Score", 20),
+    "geo-citability":          ("Citability Score", 20),
+    "geo-content":             ("Content Score", 20),
+    "geo-technical":           ("Technical Score", 15),
+    "geo-schema":              ("Schema Score", 15),
+    "geo-platform-optimizer":  ("Platform Score", 10),
+}
+
+TIER_BANDS = [(85, "Excellent"), (70, "Good"), (50, "Needs Work"), (0, "Poor")]
+
+
+def compose_composite(rollup: dict, explicit: dict | None = None) -> dict:
+    """Weighted composite from the per-skill rollup + explicit --score args.
+
+    Explicit scores (passed by the consolidator LLM from upstream agent
+    outputs) take precedence over file-derived markers: they are fresher —
+    the file may be from a previous audit. Both paths end in the same
+    deterministic arithmetic below; the LLM never averages anything.
+    """
+    explicit = explicit or {}
+    used, missing = [], []
+    for skill, (label, weight) in COMPOSITE_COMPONENTS.items():
+        score = explicit.get(skill)
+        if score is None:
+            info = rollup.get(skill)
+            if info:
+                score = info["scores"].get(label)
+        if score is None:
+            missing.append({"component": skill, "marker": label, "weight": weight})
+        else:
+            used.append({"component": skill, "marker": label,
+                         "score": int(score), "weight": weight})
+    if len(used) < 2:
+        return {"status": "insufficient_data", "used": used, "missing": missing,
+                "composite": None, "tier": None}
+    total_w = sum(c["weight"] for c in used)
+    value = sum(c["score"] * c["weight"] for c in used) / total_w
+    composite = int(round(value))
+    tier = next(t for floor, t in TIER_BANDS if composite >= floor)
+    return {"status": "ok", "used": used, "missing": missing,
+            "composite": composite, "tier": tier,
+            "weights_renormalized": len(missing) > 0}
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +166,17 @@ def is_report_filename(name: str) -> bool:
     nl = name.lower()
     if not (nl.endswith(".md") or nl.endswith(".json")):
         return False
+    # Exclude the consolidator's OWN outputs and any prior FINAL report /
+    # inventory. Re-ingesting them re-feeds the LLM past (fabricated) impact
+    # numbers — e.g. "+50-75% citations / 400-700 visitors" — and makes the
+    # inventory grow every run. We gather only per-dimension audit extracts.
+    if any(tok in nl for tok in (
+        "inventory", "readiness", "consolidat",
+        "-report", "_report", "report-",
+    )):
+        return False
     return any(token in nl for token in (
-        "geo-", "audit", "extract", "report", "score", "analysis",
-        "monthly", "delta", "client",
+        "geo-", "audit", "extract", "score", "analysis",
     ))
 
 
@@ -139,22 +207,48 @@ def list_outputs(filter_substr: str | None,
             })
         return entries
 
-    if not DEFAULT_OUTPUT_DIR.exists():
-        return []
-    for p in DEFAULT_OUTPUT_DIR.iterdir():
-        if not p.is_file():
+    # Collect report files from DEFAULT_OUTPUT_DIR, the parent /outputs root,
+    # AND every sibling group bucket (GEO/, SEO/, …). geo-technical writes to the
+    # SEO/ group, so scanning only the GEO bucket would silently miss it (the
+    # exact gap that left "geo-technical: MISSING" in the report).
+    scan_dirs: list[Path] = []
+    for d in (DEFAULT_OUTPUT_DIR, DEFAULT_OUTPUT_DIR.parent):
+        if d.exists() and d not in scan_dirs:
+            scan_dirs.append(d)
+            try:
+                for sub in sorted(d.iterdir()):
+                    if sub.is_dir() and sub not in scan_dirs:
+                        scan_dirs.append(sub)
+            except OSError:
+                pass
+    candidates: list[Path] = []
+    seen_paths: set[str] = set()
+    for d in scan_dirs:
+        try:
+            for p in d.iterdir():
+                rp = str(p.resolve())
+                if p.is_file() and rp not in seen_paths:
+                    seen_paths.add(rp)
+                    candidates.append(p)
+        except OSError:
             continue
+    for p in candidates:
         if not is_report_filename(p.name):
             continue
-        if filter_substr and filter_substr.lower() not in p.name.lower():
-            # Content match as a fallback (the filter may be a domain that
-            # appears in the report body but not the filename).
-            try:
-                head = p.read_text(encoding="utf-8", errors="ignore")[:4000]
-            except Exception:
-                head = ""
-            if filter_substr.lower() not in head.lower():
-                continue
+        try:
+            head = p.read_text(encoding="utf-8", errors="ignore")[:4000]
+        except Exception:
+            head = ""
+        hl = head.lower()
+        # Skip consolidated REPORTS even if the name slipped through — they
+        # carry the exec-summary signature. Feeding a prior report back to the
+        # consolidator re-introduces its fabricated impact numbers.
+        if "geo readiness score of" in hl or "## executive summary" in hl:
+            continue
+        if filter_substr and filter_substr.lower() not in p.name.lower() \
+                and filter_substr.lower() not in hl:
+            # Filter may be a domain that appears in the body, not the filename.
+            continue
         st = p.stat()
         entries.append({
             "path": str(p), "name": p.name,
@@ -193,13 +287,21 @@ def read_metadata(entry: dict) -> dict:
 # Report rendering
 # ---------------------------------------------------------------------------
 
-def render(entries: list[dict]) -> tuple[str, dict]:
+def render(entries: list[dict], explicit_scores: dict | None = None) -> tuple[str, dict]:
     """Build the stdout aggregate + a structured summary dict."""
     L: list[str] = [
         "# GEO audit inventory + content",
         "",
         f"**Output folder:** `{DEFAULT_OUTPUT_DIR}`",
         f"**Files found:** {len(entries)}",
+        "",
+        "> **Report-writing rules (do NOT violate):** Base every claim and number "
+        "strictly on the audit data below. Do NOT invent quantitative impact — no "
+        "citation-rate percentages, no visitor/traffic projections, and no fixed "
+        "timeframes (e.g. \"+50-75% citations\", \"400-700 monthly visitors\", "
+        "\"within 90 days\"). None of that is measured here, so it must not appear. "
+        "Express impact qualitatively (high / medium / low) and tie each "
+        "recommendation to the specific gap that motivates it.",
         "",
     ]
     if not entries:
@@ -249,6 +351,30 @@ def render(entries: list[dict]) -> tuple[str, dict]:
             L.append(f"| {skill} | {info['file']} | {sc} |")
         L.append("")
 
+    # Deterministic composite — the report MUST use this value verbatim.
+    comp = compose_composite(rollup, explicit_scores)
+    L += ["## Composite GEO Readiness Score (COMPUTED — use verbatim)", ""]
+    if comp["status"] != "ok":
+        L.append("⚠️ INSUFFICIENT DATA — fewer than 2 scored components found. "
+                 "Do NOT report a composite score; state which audits are "
+                 "missing instead.")
+    else:
+        L.append("| Component | Score | Weight |")
+        L.append("|---|---|---|")
+        for c in comp["used"]:
+            L.append(f"| {c['component']} | {c['score']}/100 | {c['weight']} |")
+        if comp["missing"]:
+            for m_ in comp["missing"]:
+                L.append(f"| {m_['component']} | (missing) | excluded |")
+        L.append("")
+        note = (" — weights renormalized over present components"
+                if comp.get("weights_renormalized") else "")
+        L.append(f"**COMPOSITE: {comp['composite']}/100 ({comp['tier']})**"
+                 f" — weighted mean of {len(comp['used'])} component(s){note}.")
+        L.append("The LLM must use this exact number and tier. Never recompute, "
+                 "round differently, or 'adjust' it.")
+    L.append("")
+
     # Per-file content (capped).
     L += ["## File contents", ""]
     for e in entries:
@@ -287,6 +413,7 @@ def render(entries: list[dict]) -> tuple[str, dict]:
                       if k not in ("content", "content_for_stdout")}
                      for e in entries],
         "score_rollup": rollup,
+        "composite": comp,
         "skills_present": skills_present,
         "domains_present": domains_present,
         "missing_skills": missing_skills,
@@ -337,11 +464,42 @@ def main(argv: list[str] | None = None) -> int:
                         help="Inventory only — no content reading.")
     parser.add_argument("--source", default=None,
                         help="Runner pre-fetch source label (ignored).")
+    parser.add_argument("--score", action="append", default=[],
+                        metavar="COMPONENT=N",
+                        help="Explicit 0-100 component score from an upstream "
+                             "audit output (repeatable). COMPONENT is one of: "
+                             "crawlers, citability, content, technical, "
+                             "schema, platform (or the full geo-* skill "
+                             "name). Example: --score citability=64")
     parser.add_argument("-o", "--output", type=Path, default=None,
                         help="Output path. Default: "
                              "~/Documents/synergyAI/outputs/ (/outputs/ in "
                              "Pyodide).")
     args = parser.parse_args(argv)
+
+    # Normalize --score args to full component keys.
+    _alias = {"crawlers": "geo-crawlers", "crawler": "geo-crawlers",
+              "citability": "geo-citability", "content": "geo-content",
+              "eeat": "geo-content", "technical": "geo-technical",
+              "schema": "geo-schema", "platform": "geo-platform-optimizer"}
+    explicit_scores: dict = {}
+    for kv in (args.score or []):
+        if "=" not in kv:
+            print(f"[geo-report] ignoring malformed --score '{kv}' "
+                  "(expected COMPONENT=N)", file=sys.stderr)
+            continue
+        k, _, v = kv.partition("=")
+        key = _alias.get(k.strip().lower(), k.strip().lower())
+        if key not in COMPOSITE_COMPONENTS:
+            print(f"[geo-report] ignoring unknown --score component '{k}' "
+                  f"(known: {sorted(_alias)})", file=sys.stderr)
+            continue
+        try:
+            n = int(v)
+        except ValueError:
+            print(f"[geo-report] ignoring non-numeric --score '{kv}'", file=sys.stderr)
+            continue
+        explicit_scores[key] = max(0, min(100, n))
 
     if args.list:
         substr = args.inputs[0] if len(args.inputs) == 1 else None
@@ -367,7 +525,7 @@ def main(argv: list[str] | None = None) -> int:
     entries = [read_metadata(e) for e in entries if not e.get("missing")] + \
               [e for e in entries if e.get("missing")]
 
-    report, structured = render(entries)
+    report, structured = render(entries, explicit_scores)
 
     md_path, json_path = resolve_output_paths(args.output)
     md_path.parent.mkdir(parents=True, exist_ok=True)

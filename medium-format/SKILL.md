@@ -65,9 +65,27 @@ python scripts/transform.py post.html -o post.medium.html \
 | `--base-url` | Origin URL used to resolve relative paths in `<a href>` and `<img src>`. Strongly recommended whenever the source HTML has relative links — Medium downloads images by URL at import time, so relative paths will fail silently. |
 | `--main-selector` | CSS selector for the article container (e.g. `article`, `.post-content`, `#main`). If omitted, the entire `<body>` is processed. When set, the script also pulls in any `<header>` or `<h1>` that's a sibling/ancestor of the selected element — many sites put the article title in a `<header>` outside the article body, and we don't want to silently strip it. |
 
+### Where the files live — use these paths verbatim
+
+Every file the user uploads or drags in is staged into the skill sandbox, and
+its **exact path is given to you** in the `attached_files` list of the
+`discover_skill` result. Each entry is at **`/scratch/<original-filename>`**.
+
+- **Input**: pass that staged path exactly as given, e.g.
+  `python scripts/transform.py /scratch/my-post.html -o /outputs/my-post.medium.html …`
+- **Output**: always write to **`/outputs/<name>`**.
+
+**Never build the input path yourself.** Do NOT prepend the file's original
+folder (e.g. its website directory), the `outputs` directory, or any other
+prefix to the filename, and do NOT read the input from `/outputs/`. The uploaded
+file exists only at `/scratch/<filename>`. (Observed failure: reading the input
+from something like `<source-folder>/synergyAI/outputs/<file>` — that path does
+not exist in the sandbox, so the run fails or processes nothing. The source web
+location of the file is irrelevant; only the `/scratch/` path is real.)
+
 ### Working with the user's input
 
-1. **If they've uploaded a single HTML file**: pass it directly. If it has a `<link rel="stylesheet" href="...">`, the script reads the linked CSS from disk relative to the HTML file. Make sure the CSS file is alongside it.
+1. **If they've uploaded a single HTML file**: pass its `/scratch/<filename>` path directly as the input. If it has a `<link rel="stylesheet" href="...">`, the script reads the linked CSS from disk relative to the HTML file, so the CSS must be staged alongside it under `/scratch/`.
 2. **If they've uploaded an HTML fragment** (no `<html>`/`<body>`): also fine — the script handles it.
 3. **If they've uploaded multiple files**: ask which file is the article. Place the linked CSS files in the same directory as the HTML file before running.
 4. **If they paste HTML into the chat**: save it to a temp file first, then run the script on it.

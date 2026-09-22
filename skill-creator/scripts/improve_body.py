@@ -3,7 +3,21 @@
 from __future__ import annotations
 import argparse, asyncio, json, re, sys
 from pathlib import Path
-from scripts.patch import apply_patch_to_body
+from scripts.patch import apply_patch_to_body, apply_patches_to_corpus
+
+
+def _read_corpus(skill_path):
+    """The skill's editable markdown: SKILL.md + every references/*.md,
+    keyed by relative path. The proposer sees and may edit all of them."""
+    corpus = {}
+    sk = skill_path / "SKILL.md"
+    if sk.is_file():
+        corpus["SKILL.md"] = sk.read_text()
+    refs = skill_path / "references"
+    if refs.is_dir():
+        for f in sorted(refs.glob("*.md")):
+            corpus[f"references/{f.name}"] = f.read_text()
+    return corpus
 
 AGENT_ENDPOINT = "/gpt/backend/api/v1/agent"
 
@@ -64,12 +78,16 @@ async def improve_body(skill_path, failure_patterns, model, provider="claude", l
     skill_md_path = skill_path / "SKILL.md"
     if not skill_md_path.is_file():
         raise FileNotFoundError(f"SKILL.md not found at {skill_md_path}")
-    skill_md = skill_md_path.read_text()
+    corpus = _read_corpus(skill_path)
     skill_creator_dir = Path(__file__).resolve().parent.parent
     system_prompt = _read_body_analyzer_prompt(skill_creator_dir)
 
-    parts = [f"## Current SKILL.md (path: {skill_md_path})", "", skill_md, "",
-             f"## Observed failure patterns ({len(failure_patterns)} items)", ""]
+    parts = ["## Skill documents",
+             'You may edit ANY of these files — set `"file"` on each edit (default "SKILL.md"). '
+             'The problem may live in a reference doc, not SKILL.md.', ""]
+    for relpath, content in corpus.items():
+        parts.extend([f"### FILE: {relpath}", "", content, ""])
+    parts.extend([f"## Observed failure patterns ({len(failure_patterns)} items)", ""])
     for i, fp in enumerate(failure_patterns, 1): parts.append(f"{i}. {fp.strip()}")
     if success_patterns:
         parts.extend(["", f"## Observed success patterns ({len(success_patterns)} items)", ""])
@@ -78,22 +96,25 @@ async def improve_body(skill_path, failure_patterns, model, provider="claude", l
         parts.extend(["", "## Rejected edits from prior iterations (do not repeat)", ""])
         for r in rejected_edits[-5:]: parts.append(json.dumps(r, indent=2))
     parts.extend(["", "## Constraints",
-                  f"- lr_budget: {lr_budget} (propose AT MOST this many edits)",
-                  "- Edits to frontmatter or the SLOW_UPDATE block will be silently rejected",
+                  f"- lr_budget: {lr_budget} (propose AT MOST this many edits TOTAL across all files)",
+                  "- In SKILL.md, edits to frontmatter or the SLOW_UPDATE block are silently rejected",
+                  '- Set `file` to the exact path shown above (e.g. "references/vocabulary.md")',
                   "", "Respond with ONLY the JSON object specified in your system prompt."])
     user_msg = "\n".join(parts)
 
     response_text = await _call_optimizer(prompt=user_msg, model=model, provider=provider, system=system_prompt)
     parsed = _parse_patch_response(response_text)
     if not parsed:
-        return {"patch": None, "applied": 0, "skipped": [], "before": skill_md, "after": skill_md,
-                "reasoning": "Optimizer returned no parseable JSON; no edits applied.", "raw_response": response_text}
+        return {"patch": None, "applied": 0, "skipped": [], "before_corpus": corpus, "after_corpus": corpus,
+                "changed_files": {}, "reasoning": "Optimizer returned no parseable JSON; no edits applied.",
+                "raw_response": response_text}
 
     edits = parsed.get("edits", [])
-    new_skill_md, skipped = apply_patch_to_body(skill_md, edits, lr_budget=lr_budget)
-    return {"patch": parsed, "applied": len(edits) - len(skipped), "skipped": skipped,
-            "before": skill_md, "after": new_skill_md, "reasoning": parsed.get("reasoning", ""),
-            "raw_response": response_text}
+    new_corpus, skipped, applied = apply_patches_to_corpus(corpus, edits, lr_budget=lr_budget)
+    changed_files = {f: new_corpus[f] for f in new_corpus if new_corpus[f] != corpus.get(f)}
+    return {"patch": parsed, "applied": applied, "skipped": skipped,
+            "before_corpus": corpus, "after_corpus": new_corpus, "changed_files": changed_files,
+            "reasoning": parsed.get("reasoning", ""), "raw_response": response_text}
 
 
 def main():
@@ -129,12 +150,15 @@ def main():
     if args.out:
         Path(args.out).write_text(json.dumps(result, indent=2))
     if args.apply:
-        if result["after"] == result["before"]:
+        changed = result.get("changed_files", {})
+        if not changed:
             print("[improve_body] No changes (no-op).", file=sys.stderr)
         else:
-            (skill_path / "SKILL.md.bak").write_text(result["before"])
-            (skill_path / "SKILL.md").write_text(result["after"])
-            print("[improve_body] APPLIED. Backup at SKILL.md.bak", file=sys.stderr)
+            for relpath, content in changed.items():
+                fpath = skill_path / relpath
+                (fpath.parent / (fpath.name + ".bak")).write_text(result["before_corpus"][relpath])
+                fpath.write_text(content)
+            print(f"[improve_body] APPLIED to {len(changed)} file(s); .bak backups written.", file=sys.stderr)
     else:
         print("[improve_body] DRY RUN (use --apply to write).", file=sys.stderr)
 

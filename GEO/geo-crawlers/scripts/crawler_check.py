@@ -119,9 +119,14 @@ async def _fetch_pyodide(url: str) -> dict | None:
     except Exception:
         pass
     try:
-        resp = await pyodide.http.pyfetch(
-            PROXY_ENDPOINT, method="POST", headers=headers,
-            body=json.dumps({"url": url}),
+        # Bound each browser fetch so a stalled proxy request can't hang the
+        # whole skill (pyfetch has no built-in timeout, unlike the urllib path).
+        resp = await asyncio.wait_for(
+            pyodide.http.pyfetch(
+                PROXY_ENDPOINT, method="POST", headers=headers,
+                body=json.dumps({"url": url}),
+            ),
+            timeout=15,
         )
         payload = json.loads(await resp.string())
     except Exception:
