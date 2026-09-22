@@ -16,7 +16,6 @@ A collection of folder-backed **skills** — self-contained capability bundles a
 - **[`hyperframes`](hyperframes/SKILL.md)** — Create video compositions, animations, title cards, overlays, captions, voiceovers, audio-reactive visuals, and scene transitions in HyperFrames HTML.
 - **[`linkedin-carousel`](linkedin-carousel/SKILL.md)** — Generate professional LinkedIn carousel posts as PDF documents from text content. Use this skill whenever the user wants to create a LinkedIn carousel
 - **[`markdown-report`](markdown-report/SKILL.md)** — Render a markdown document as a clean, conversation-style HTML page (deterministic — the layout comes from the render script, not from model-authored
-- **[`master-claude-for-legal`](master-claude-for-legal/SKILL.md)** · [📖 docs](master-claude-for-legal/README.md) — Use this skill whenever the user is doing legal work or planning to in SynergyAI — contracts, NDAs, redlines, privilege questions, attorney-client con
 - **[`medium-format`](medium-format/SKILL.md)** — Use this skill whenever the user wants to convert, transform, prepare, or adapt an HTML and/or CSS file for Medium.com — including phrases like 'forma
 - **[`newspaper-layout`](newspaper-layout/SKILL.md)** — Broadsheet newspaper HTML layout with CSS design system, typography rules, editorial patterns, and multi-column grid.
 - **[`playbook-author`](playbook-author/SKILL.md)** · [📖 docs](playbook-author/README.md) — Write a Console-style ITSM PLAYBOOK from a request and save it as a Playbook agent the user can drag into a workflow. USE THIS whenever the user asks
@@ -24,7 +23,6 @@ A collection of folder-backed **skills** — self-contained capability bundles a
 - **[`report-pdf`](report-pdf/SKILL.md)** — Render synthesized report content (markdown or plain text) into a styled PDF. USE scripts/build.py when a workflow's terminal agent must deliver a PDF
 - **[`schema-generate`](schema-generate/SKILL.md)** · [📖 docs](schema-generate/README.md) — Generate ready-to-paste JSON-LD structured-data markup for a web page. Use for: 'generate schema', 'add JSON-LD to my page', 'schema markup for [Artic
 - **[`skill-creator`](skill-creator/SKILL.md)** — Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or opt
-- **[`test-slow-update-warning`](test-slow-update-warning/SKILL.md)** — A test skill demonstrating missing SLOW_UPDATE markers.
 - **[`workflow-compile`](workflow-compile/SKILL.md)** · [📖 docs](workflow-compile/README.md) — Author a multi-agent workflow in a compact JSON form and compile it into the full Workflow DSL JSON the engine loads. USE scripts/compile.py when the 
 - **[`xlsx`](xlsx/SKILL.md)** — Create or edit Excel (.xlsx, .xlsm) files. Use this skill whenever the user wants to GENERATE a new spreadsheet (report, model, table, etc.) or modify
 
