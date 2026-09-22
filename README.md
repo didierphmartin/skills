@@ -2,6 +2,14 @@
 
 A collection of folder-backed **skills** — self-contained capability bundles an AI assistant invokes by name when a skill's description matches the task. Each skill is a `SKILL.md` (frontmatter + instructions) plus optional `scripts/`, `references/`, and — for skills with deeper docs — a `README.md`.
 
+## Specification
+
+These skills follow Anthropic's **[Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)** specification, so they work anywhere that spec is supported — Claude Code, claude.ai, the Claude API — not only in SynergyAI. A skill is a directory whose one required file is `SKILL.md`: YAML frontmatter with `name` and `description`, followed by the instructions. `name` is at most 64 characters of lowercase letters, numbers and hyphens; `description` is at most 1024 characters and must say **both what the skill does and when to use it**, because that sentence is what the model matches a request against when deciding to load it.
+
+The design point behind the layout below is **progressive disclosure**. Only the frontmatter is loaded up front (~100 tokens per skill), so a large collection costs almost nothing until something is actually needed. The body of `SKILL.md` enters the context window only when the skill triggers; bundled `references/` files only when read; and `scripts/` never do — they run as subprocesses and only their output is seen. That is why a skill can ship extensive reference material and heavy scripts without penalty, and why deterministic work belongs in a script rather than in prose the model has to re-derive.
+
+Full details — authoring guidance, the runtime constraints per surface, and the security considerations for skills from untrusted sources — are in the [official documentation](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview).
+
 ## Skills
 
 - **`GEO`** _(collection)_ — sub-skills: geo-audit geo-brand-mentions geo-citability geo-compare geo-content geo-crawlers geo-llmstxt geo-platform-optimizer geo-proposal geo-prospect geo-report geo-report-pdf geo-schema geo-update 
