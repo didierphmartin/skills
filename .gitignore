@@ -21,4 +21,6 @@ outputs/
 # which was not true because no rule existed. It does now. Commit the
 # .env.example beside it instead, as SEO/serp-shape already does.
 **/.env
+**/.env.*
 !**/.env.example
+!**/.env.*.example
