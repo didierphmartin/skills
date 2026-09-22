@@ -24,3 +24,10 @@ outputs/
 **/.env.*
 !**/.env.example
 !**/.env.*.example
+
+# Editor leftovers. workflow-compile/SKILL.md.bak turned up alongside a real
+# edit; a stale copy of a skill's instructions is worse than none, since the
+# runtime reads SKILL.md by name and a reader cannot tell which is current.
+*.bak
+*.orig
+*~
