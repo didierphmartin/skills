@@ -14,3 +14,11 @@ node_modules/
 # Runtime scratch/output
 scratch/
 outputs/
+
+# Secrets. A skill's .env holds real API keys (SerpAPI et al). Three of them
+# were committed in the initial import and sat in a PUBLIC repo for months --
+# the files even carried the comment "Gitignored — never commit this file",
+# which was not true because no rule existed. It does now. Commit the
+# .env.example beside it instead, as SEO/serp-shape already does.
+**/.env
+!**/.env.example
