@@ -8,6 +8,10 @@ These skills follow Anthropic's **[Agent Skills](https://platform.claude.com/doc
 
 The design point behind the layout below is **progressive disclosure**. Only the frontmatter is loaded up front (~100 tokens per skill), so a large collection costs almost nothing until something is actually needed. The body of `SKILL.md` enters the context window only when the skill triggers; bundled `references/` files only when read; and `scripts/` never do — they run as subprocesses and only their output is seen. That is why a skill can ship extensive reference material and heavy scripts without penalty, and why deterministic work belongs in a script rather than in prose the model has to re-derive.
 
+**Where the scripts actually run.** In SynergyAI's chat, a skill's Python runs in **[Pyodide](https://pyodide.org/)** — CPython compiled to WebAssembly — inside the browser tab. The browser *is* the sandbox: the script gets no ambient filesystem, no shell and no network beyond what the page already allows, and it reaches your files only through the folder you explicitly granted with the File System Access API. Declared PyPI dependencies are installed into that WASM environment with micropip, not onto your machine.
+
+One exception, worth stating plainly: a skill invoked from a **compiled workflow** does not run in Pyodide. Those packages execute on a local Python runner, where scripts are ordinary subprocesses with your user's privileges — the same trade the Agent Skills documentation describes for Claude Code, and the reason its security guidance about untrusted skills applies there and not to the browser path.
+
 Full details — authoring guidance, the runtime constraints per surface, and the security considerations for skills from untrusted sources — are in the [official documentation](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview).
 
 ## Skills
