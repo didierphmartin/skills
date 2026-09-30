@@ -100,3 +100,39 @@ class ReplyTemplateTest(unittest.TestCase):
         self.assertIn('nothing else', rule)
         self.assertNotIn('3–5 lines', skill)
         self.assertIn("rule 6's lines", skill)          # step 6 points at the template
+
+
+class NoUnreachableReferenceTest(unittest.TestCase):
+    """example-onboarding.md is not a context reference, so the model in the app cannot read it: never send it there."""
+
+    def test_model_is_not_told_to_read_the_example(self):
+        skill = (SKILL / 'SKILL.md').read_text(encoding='utf-8')
+        spec = (SKILL / 'references' / 'flow-spec.md').read_text(encoding='utf-8')
+        self.assertNotIn('example-onboarding', spec)
+        self.assertNotIn('Read `references/example-onboarding.md`', skill)
+        self.assertIn('for maintainers: references/example-onboarding.md', skill)
+
+
+class StandInExitCodeTest(unittest.TestCase):
+    """tests/dev/run_skill_script.py reports, and exits with, the script's real exit code."""
+
+    def run_call(self, work, argv, spec):
+        import json, subprocess, sys, tempfile
+        from pathlib import Path
+        call = Path(work) / 'call.json'
+        call.write_text(json.dumps({'script': 'scripts/create.py', 'argv': argv,
+                                    'input_files': {'/scratch/s.json': json.dumps(spec)}}), encoding='utf-8')
+        return subprocess.run([sys.executable, str(SKILL / 'tests/dev/run_skill_script.py'), '--work', str(work), str(call)],
+                              capture_output=True, text=True)
+
+    def test_exit_codes(self):
+        import tempfile
+        from helpers import minimal
+        with tempfile.TemporaryDirectory() as work:
+            bad = dict(minimal(), name='X')
+            for argv, spec, code in ((['-i', '/scratch/s.json'], bad, 1),                          # INVALID
+                                     (['-i', '/scratch/s.json'], minimal(), 1),                    # NEED_VENDOR
+                                     (['-i', '/scratch/s.json', '--vendor', '1234567'], minimal(), 0)):
+                r = self.run_call(work, argv, spec)
+                self.assertEqual(r.returncode, code, r.stdout)
+                self.assertIn(f'exit code: {code}\n', r.stdout)

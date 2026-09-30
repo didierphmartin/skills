@@ -44,7 +44,7 @@ context-references: references/flow-spec.md, references/fluent-vocabulary.md
 
 1. Read the procedure. Does it need data from people (a start date, an equipment list)? Then it is a
    **catalog item**: trigger `service_catalog`, a `"form"` with the variables known at the start, its start condition ("when HR creates a user…") in `form.submitted_by`, catalog and category placeholders, and an
-   ask step for each question a person answers later. Read `references/example-onboarding.md` first. Otherwise
+   ask step for each question a person answers later (for maintainers: references/example-onboarding.md). Otherwise
    pick a record or scheduled trigger.
 2. Write the steps in order. Each has an `id` (snake_case, unique), a `label` in the user's language, and an
    `action` with `inputs`, an `ask`, or a `logic` block; values and pills as in flow-spec.md → Values.

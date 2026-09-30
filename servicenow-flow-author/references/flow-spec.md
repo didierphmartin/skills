@@ -50,8 +50,9 @@ A procedure that needs data from people is a catalog item. `form` describes its 
 ```
 
 - `submitted_by`: the procedure's start condition — who submits the form and when (the item's description).
-- `catalog`, `category`: placeholders of kind `catalog` / `category` (every item needs both; `FLOWS.md` names
-  them so the user knows where the item is listed).
+- `catalog`, `category`: always `{"placeholder": "<name>"}`, and both placeholders must be declared under the top-level
+  `placeholders` with kind `catalog` / `category` (every item needs both; `FLOWS.md` names them so the user knows
+  where the item is listed).
 - `variables`: `name` (snake_case, unique on the item), `label` (the question), `type` from
   `fluent-vocabulary.md` → Catalog, `mandatory`, `help`; `reference` and `list_collector` need `"reference":
   "<table>"`, `select_box` and `multiple_choice` need `"choices"`. A checkbox cannot be mandatory (use `yes_no`).
@@ -142,7 +143,7 @@ gives a real value, put it in the placeholder's `value`. `fireEvent`'s `event_na
 A task created by a record-triggered flow must set a reference field to the trigger record
 (`{"pill": "trigger.current.sys_id"}`): `parent` when the trigger table is a task table, otherwise a field the
 script suggests. If the table has none, make the procedure a catalog item: its tasks are catalog tasks of the
-request. A complete catalog example is `example-onboarding.md`.
+request.
 
 ## Complete example
 

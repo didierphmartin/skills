@@ -3,7 +3,8 @@
 
 Reads one call {"script", "argv", "input_files"} as JSON (file argument or stdin), maps the Pyodide paths
 /scratch → <work>/scratch and /outputs → <work>/outputs, writes input_files, runs the skill script with the
-local Python, and prints exit code, stdout and stderr exactly as the model would see them.
+local Python, and prints exit code, stdout and stderr exactly as the model would see them; it exits with the
+script's exit code.
 Usage: run_skill_script.py --work <dir> [call.json]
 """
 import argparse, json, subprocess, sys
@@ -35,7 +36,7 @@ def main() -> int:
         argv += ['--out', str(work / 'outputs' / 'servicenow')]
     r = subprocess.run([sys.executable, str(SKILL / call['script']), *argv], capture_output=True, text=True)
     print(f'exit code: {r.returncode}\n--- stdout ---\n{r.stdout}--- stderr ---\n{r.stderr}')
-    return 0
+    return r.returncode   # the stand-in exits with the script's own code, as the app reports it
 
 
 if __name__ == '__main__':
