@@ -1257,6 +1257,7 @@ def render_flow(ir: dict) -> str:
 # One shared app per vendor (spec decision 2) under <out>/x_<vendor>_synergy/. The user builds and installs from that
 # folder every time (decision 7); the zip beside it only moves the project to another machine.
 ZIP_SKIP = ('node_modules/', 'dist/', 'target/', '.now/', 'src/fluent/generated/')
+ZIP_KEEP = ('src/fluent/generated/keys.ts',)   # the build's record keys: without them the next install duplicates
 NEED_VENDOR_TEXT = ('NEED_VENDOR — the app scope is x_<company code>_synergy and the company code is not known yet.\n'
                     'NEXT: ask the user once for their instance\'s company code (in ServiceNow Studio, the prefix shown '
                     'when creating an app, e.g. x_1234567 → 1234567), then run again with "--vendor", "<code>".')
@@ -1349,8 +1350,8 @@ item (Service Catalog → the category named in `FLOWS.md`).
 Schedule placeholders: {SCHEDULE_NOTE}.
 
 Build and install from this folder every time. Keep `src/fluent/generated/keys.ts` (it maps each step to its
-record on the instance; losing it makes the next install create duplicates). The zip next to this folder is only
-for moving the project to another machine.
+record on the instance; losing it makes the next install create duplicates). The zip next to this folder only
+moves the whole project (keys.ts included) to another machine; it is refreshed on every SynergyAI run.
 """
 
     def flows_md(self) -> str:
@@ -1404,12 +1405,15 @@ for moving the project to another machine.
         return f"`{name}` ({'filled: ' + p['value'] if 'value' in p else 'to fill'})"
 
     def zip(self) -> Path:
-        """<out>/x_<vendor>_synergy.zip of the project without dependencies, build outputs or generated keys."""
+        """<out>/x_<vendor>_synergy.zip of the project without dependencies or build outputs, but with generated/keys.ts.
+
+        Why keys.ts: it maps every step to its record on the instance; a project moved without it would create
+        duplicates on the next install."""
         zpath = self.out / f'{self.scope}.zip'
         with zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED) as z:
             for f in sorted(self.root.rglob('*')):
                 rel = f.relative_to(self.root).as_posix()
-                if f.is_file() and not any(rel.startswith(s) for s in ZIP_SKIP):
+                if f.is_file() and (rel in ZIP_KEEP or not any(rel.startswith(s) for s in ZIP_SKIP)):
                     z.write(f, f'{self.scope}/{rel}')
         return zpath
 
@@ -1486,7 +1490,7 @@ def main(argv: list[str] | None = None) -> int:
               f'(who and when: {ir["form"]["submitted_by"]})')
     print(f'NEXT: reply in 3–5 lines — the flow title, the folder {proj}, the placeholders to fill, and the commands '
           '`npx now-sdk build` then `npx now-sdk install` (first time in that folder: `npm install` and '
-          '`npx now-sdk auth --add <instance> --type basic`).')
+          '`npx now-sdk auth --add https://<instance>.service-now.com --type basic`).')
     return 0
 
 

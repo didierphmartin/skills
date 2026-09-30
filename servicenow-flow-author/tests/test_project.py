@@ -49,17 +49,19 @@ class ProjectTest(unittest.TestCase):
         self.assertIn('- Catalog item listed in: catalog `service_catalog` (filled: e0d08b13c3330100c8b837659bba8fb4) '
                       '/ category `hr_category` (to fill)', (self.proj / 'FLOWS.md').read_text())
 
-    def test_zip_holds_the_project_without_build_outputs(self):
+    def test_zip_holds_the_project_and_keys_without_build_outputs(self):
         run_cli(fixture('onboarding-en.json'), self.out, '--vendor', '1234567')
         (self.proj / 'src/fluent/generated').mkdir(parents=True)
         (self.proj / 'src/fluent/generated/keys.ts').write_text('// keys')
+        (self.proj / 'src/fluent/generated/other.ts').write_text('// build scratch')
         (self.proj / 'node_modules').mkdir()
         (self.proj / 'node_modules/x.js').write_text('')
         run_cli(minimal(), self.out)
         names = zipfile.ZipFile(self.out / f'{SCOPE}.zip').namelist()
         self.assertIn(f'{SCOPE}/src/fluent/flows/log-new-incident.now.ts', names)
         self.assertIn(f'{SCOPE}/now.config.json', names)
-        self.assertFalse([n for n in names if '/node_modules/' in n or '/generated/' in n], names)
+        self.assertIn(f'{SCOPE}/src/fluent/generated/keys.ts', names)   # moving the project keeps the record keys
+        self.assertFalse([n for n in names if '/node_modules/' in n or n.endswith('/generated/other.ts')], names)
 
     def test_second_flow_is_added_not_replacing(self):   # Review Focus 4
         run_cli(fixture('onboarding-en.json'), self.out, '--vendor', '1234567')

@@ -6,8 +6,10 @@ they need (usually the folder, the placeholders and the two commands).
 ## Where the project is
 
 `~/Documents/synergyAI/outputs/servicenow/x_<code>_synergy/` (the app's `/outputs/servicenow/…`). Build and
-install from that folder, the same one every time. The zip `x_<code>_synergy.zip` next to it is only for moving
-the project to another machine. One app ("SynergyAI flows") holds every flow; `FLOWS.md` in the folder lists them:
+install from that folder, the same one every time. The zip `x_<code>_synergy.zip` next to it only moves the
+project to another machine: it holds the whole project, `src/fluent/generated/keys.ts` included (not
+`node_modules`, `dist`, `target`, `.now`), as of the last SynergyAI run — build and install in the unzipped folder
+there. One app ("SynergyAI flows") holds every flow; `FLOWS.md` in the folder lists them:
 per flow its file, trigger, who submits the order form and when, the catalog and category it is listed in, the
 variables, and each placeholder (filled or to fill).
 

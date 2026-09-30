@@ -59,14 +59,25 @@ class FlowSpecDocTest(unittest.TestCase):
 class CurrentBehaviourDocTest(unittest.TestCase):
     """The model-facing texts state what create.py does now (Tasks 2–5), not what the first draft assumed."""
 
-    def test_skill_md_and_flow_spec_match_the_script(self):
+    def test_skill_md_and_references_match_the_script(self):
         skill = (SKILL / 'SKILL.md').read_text(encoding='utf-8')
         spec = (SKILL / 'references' / 'flow-spec.md').read_text(encoding='utf-8')
+        deploy = (SKILL / 'references' / 'deploy.md').read_text(encoding='utf-8')
         for text in (skill, spec):
             self.assertIn('!=approved', text)                     # any outcome other than approved stops
-            self.assertIn('24h', text)                            # a schedule "day" is 24h of schedule time
             self.assertIn('event_name', text)                     # fireEvent.event_name is a placeholder
             self.assertRegex(text, r'never a typed name or sys_id|typed name or sys_id is rejected')
+        self.assertIn('24h', spec)                                # a schedule "day" is 24h of schedule time
+        self.assertIn('flow-spec.md → Waits', skill)
         self.assertIn('/outputs/servicenow/.vendor', skill)
         self.assertIn('~/Documents/synergyAI/outputs/servicenow/x_<code>_synergy/', skill)
-        self.assertIn('only moves the project', skill)
+        self.assertIn('No `read_outputs`', skill)
+        self.assertIn('only moves the', deploy)
+        self.assertIn('keys.ts` included', deploy)                # the zip carries the record keys
+
+    def test_one_auth_command_form(self):
+        auth = 'npx now-sdk auth --add https://<instance>.service-now.com --type basic'
+        for f in ('SKILL.md', 'references/deploy.md', 'scripts/create.py'):
+            text = (SKILL / f).read_text(encoding='utf-8')
+            self.assertIn(auth, text, f)
+            self.assertNotIn('auth --add <instance>', text, f)
