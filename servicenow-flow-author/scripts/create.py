@@ -148,19 +148,20 @@ def resolve_pill(ctx: Ctx, path, where: str):
         ctx.err(where, f'pill {json.dumps(path)} must be a dotted path such as "trigger.current.manager" or "step_id.output"')
         return None
     head, *rest = path.split('.')
-    if head == 'trigger':
-        ctx.uses_params = True
-        outs = ctx.trigger.get('outputs', {})
-        if not rest or rest[0] not in outs:
-            ctx.err(where, f'pill "{path}": the trigger outputs are {", ".join(outs) or "none"}')
-            return None
-        out = outs[rest[0]]
-        if out.get('table_from') and ctx.trigger_table is None:   # trigger table already reported
-            return '.'.join(['params', 'trigger'] + rest), '?', None
-        table = ctx.trigger_table if out.get('table_from') else out.get('table')
-        return walk_fields(ctx, ['params', 'trigger', rest[0]], out['pill'], table, rest[1:], where, path)
-    if head == 'form':
-        return form_pill(ctx, rest, where, path)
+    match head:
+        case 'trigger':
+            ctx.uses_params = True
+            outs = ctx.trigger.get('outputs', {})
+            if not rest or rest[0] not in outs:
+                ctx.err(where, f'pill "{path}": the trigger outputs are {", ".join(outs) or "none"}')
+                return None
+            out = outs[rest[0]]
+            if out.get('table_from') and ctx.trigger_table is None:   # trigger table already reported
+                return '.'.join(['params', 'trigger'] + rest), '?', None
+            table = ctx.trigger_table if out.get('table_from') else out.get('table')
+            return walk_fields(ctx, ['params', 'trigger', rest[0]], out['pill'], table, rest[1:], where, path)
+        case 'form':
+            return form_pill(ctx, rest, where, path)
     b = ctx.visible(head)
     if b is None:
         if head in ctx.all_ids:
@@ -250,40 +251,44 @@ def record_ref_node(ctx: Ctx, value, where: str, field: str):
 
 def scalar_node(ctx: Ctx, value, where: str, allow_text: bool, allow_pill: bool = True):
     """A literal, {"pill"}, {"placeholder"}, or (allow_text) a list mixing text, pills and placeholders."""
-    if isinstance(value, bool):
-        return ('bool', value)
-    if isinstance(value, (int, float)):
-        return ('num', value)
-    if isinstance(value, str):
-        return ('str', value)
-    if isinstance(value, dict) and 'pill' in value:
-        if not allow_pill:
+    match value:
+        case bool():
+            return ('bool', value)
+        case int() | float():
+            return ('num', value)
+        case str():
+            return ('str', value)
+        case {'pill': _} if not allow_pill:
             ctx.err(where, 'takes static text only — no pills here')
             return None
-        return pill_node(ctx, value, where)
-    if isinstance(value, dict) and 'placeholder' in value:
-        return placeholder_node(ctx, value, where)
-    if isinstance(value, list):
-        if not allow_pill:
+        case {'pill': _}:
+            return pill_node(ctx, value, where)
+        case {'placeholder': _}:
+            return placeholder_node(ctx, value, where)
+        case list() if not allow_pill:
             ctx.err(where, 'takes static text only — no pills here')
             return None
-        if not allow_text:
+        case list() if not allow_text:
             ctx.err(where, 'text mixed with pills is not interpolated in this input (wfa-flow-guide.md:125-142) — '
                            'give one pill, one placeholder, or static text')
             return None
-        parts = []
-        for k, part in enumerate(value):
-            if isinstance(part, str):
-                parts.append(('text', part))
-            elif isinstance(part, dict) and ('pill' in part or 'placeholder' in part):
-                n = pill_node(ctx, part, where) if 'pill' in part else placeholder_node(ctx, part, where)
+        case list():
+            parts = []
+            for k, part in enumerate(value):
+                match part:
+                    case str():
+                        n = ('text', part)
+                    case {'pill': _}:
+                        n = pill_node(ctx, part, where)
+                    case {'placeholder': _}:
+                        n = placeholder_node(ctx, part, where)
+                    case _:
+                        ctx.err(where, f'part {k} must be a string, a {{"pill"}} or a {{"placeholder"}}')
+                        return None
                 if n is None:
                     return None
                 parts.append(n)
-            else:
-                ctx.err(where, f'part {k} must be a string, a {{"pill"}} or a {{"placeholder"}}')
-                return None
-        return ('tpl', parts)
+            return ('tpl', parts)
     ctx.err(where, f'unsupported value {json.dumps(value)[:60]}')
     return None
 
@@ -310,14 +315,15 @@ def check_query(ctx: Ctx, node, table: str | None, where: str):
                 out.append(seps[k])
         return ''.join(out)
 
-    if node[0] == 'str':
-        return ('str', fix(node[1], True))
-    if node[0] == 'tpl':
-        parts, start = [], True
-        for p in node[1]:
-            parts.append(('text', fix(p[1], start)) if p[0] == 'text' else p)
-            start = False
-        return ('tpl', parts)
+    match node[0]:
+        case 'str':
+            return ('str', fix(node[1], True))
+        case 'tpl':
+            parts, start = [], True
+            for p in node[1]:
+                parts.append(('text', fix(p[1], start)) if p[0] == 'text' else p)
+                start = False
+            return ('tpl', parts)
     return node
 
 
@@ -368,33 +374,33 @@ def input_node(ctx: Ctx, action: str, spec_in: dict, name: str, value, step_inpu
     key = f'{action}.{name}'
     rules = ctx.vocab['input_rules']
     typ = spec_in['type']
-    if typ == 'TemplateValue':
-        a = ctx.vocab['actions'][action]
-        tin = a.get('template_table_input')
-        table = step_inputs.get(tin) if tin else ('sc_task' if action == 'createCatalogTask' else None)
-        return template_value_node(ctx, value, table if table in ctx.tables else None, where)
-    if typ == 'Duration':
-        return duration_node(ctx, value, where)
     if action == 'askForApproval' and name == 'approval_conditions':
         return approval_node(ctx, value, where)
-    if typ in ('object', 'slushbucket', 'duration', 'datetime'):
-        ctx.err(where, f'input "{name}" ({typ}) is not supported by this skill — leave it out')
-        return None
-    if typ == 'enum':
-        if value not in spec_in['values']:
+    match typ:
+        case 'TemplateValue':
+            tin = ctx.vocab['actions'][action].get('template_table_input')
+            table = step_inputs.get(tin) if tin else ('sc_task' if action == 'createCatalogTask' else None)
+            return template_value_node(ctx, value, table if table in ctx.tables else None, where)
+        case 'Duration':
+            return duration_node(ctx, value, where)
+        case 'object' | 'slushbucket' | 'duration' | 'datetime':
+            ctx.err(where, f'input "{name}" ({typ}) is not supported by this skill — leave it out')
+            return None
+        case 'enum' if value not in spec_in['values']:
             ctx.err(where, f'must be one of {", ".join(spec_in["values"])}')
             return None
-        return ('str', value)
-    if typ == 'boolean' and not isinstance(value, (bool, dict)):
-        ctx.err(where, 'must be true or false')
-        return None
-    if typ == 'integer' and (isinstance(value, bool) or not isinstance(value, (int, dict))):
-        ctx.err(where, 'must be a whole number')
-        return None
-    if typ == 'reference':
-        node = record_ref_node(ctx, value, where, name)
-    else:
-        node = scalar_node(ctx, value, where, allow_text=key in rules['template_text'], allow_pill=key not in rules['no_pills'])
+        case 'enum':
+            return ('str', value)
+        case 'boolean' if not isinstance(value, (bool, dict)):
+            ctx.err(where, 'must be true or false')
+            return None
+        case 'integer' if isinstance(value, bool) or not isinstance(value, (int, dict)):
+            ctx.err(where, 'must be a whole number')
+            return None
+        case 'reference':
+            node = record_ref_node(ctx, value, where, name)
+        case _:
+            node = scalar_node(ctx, value, where, allow_text=key in rules['template_text'], allow_pill=key not in rules['no_pills'])
     if node is None:
         return None
     if node[0] == 'pill' and key in rules['wrap_pill']:
@@ -483,83 +489,87 @@ def step_ir(ctx: Ctx, st, where: str):
         ctx.err(where, f'logic "{kind}" is not available' + (f' — {msg}' if msg else f'; use one of {", ".join(LOGIC_KINDS)}'))
         return None
     ir = {'kind': kind, 'id': sid, 'key': step_key(ctx, sid or 'x'), 'label': st.get('label', '')}
-    if kind == 'if':
-        ir['cond'] = scalar_node(ctx, st.get('condition'), where + '.condition', True)
-        ir['body'] = body(ctx, st.get('steps'), where + '.steps')
-        ir['elifs'] = []
-        for k, e in enumerate(st.get('else_if') or []):
-            w = f'{where}.else_if[{k}]'
-            eid = check_id(ctx, e, w) if isinstance(e, dict) else None
-            if eid:
-                ir['elifs'].append({'id': eid, 'key': step_key(ctx, eid), 'label': e.get('label', ''),
-                                    'cond': scalar_node(ctx, e.get('condition'), w + '.condition', True),
-                                    'body': body(ctx, e.get('steps'), w + '.steps')})
-        if st.get('else') is not None:
-            e, w = st['else'], where + '.else'
-            eid = check_id(ctx, e, w) if isinstance(e, dict) else None
-            ir['else'] = eid and {'id': eid, 'key': step_key(ctx, eid), 'label': e.get('label', ''),
-                                  'body': body(ctx, e.get('steps'), w + '.steps')}
-        else:
-            ir['else'] = None
-    elif kind == 'for_each':
-        items, node = st.get('items'), None
-        if isinstance(items, dict) and 'pill' in items:
-            node = pill_node(ctx, items, where + '.items')
-        else:
-            ctx.err(where, '"items" must be a pill to a list: a lookUpRecords "Records" output or a list field (wfa-flow-logic-api.md:132)')
-        alias = st.get('item')
-        if not isinstance(alias, str) or not ID_RE.match(alias) or alias in RESERVED:
-            ctx.err(where, '"item" names the loop item, e.g. "open_task" ([a-z][a-z0-9_]*)')
-            alias = 'item'
-        item_table = None
-        if node is not None:
-            if node[2] == 'records':
-                item_table = node[3]
-            elif node[2] not in ('array.string', '?'):
-                ctx.err(where, f'"items" is a {node[2]}, not a list — use a lookUpRecords "Records" output or a list field')
-        ctx.in_for_each += 1
-        ir.update(items=node, alias=alias,
-                  body=body(ctx, st.get('steps'), where + '.steps', {alias: {'kind': 'item', 'table': item_table}}))
-        ctx.in_for_each -= 1
-    elif kind == 'parallel':
-        if ctx.in_parallel:
-            ctx.err(where, 'a parallel block cannot contain another parallel block (wfa-flow-logic-api.md:266)')
-        br = st.get('branches')
-        if not isinstance(br, list) or len(br) < 2:
-            ctx.err(where, '"branches" must list at least two step lists')
-            br = []
-        ctx.in_parallel += 1
-        ir['branches'] = [body(ctx, b, f'{where}.branches[{k}]') for k, b in enumerate(br)]
-        ctx.in_parallel -= 1
-    elif kind == 'try_catch':
-        ir['try'] = body(ctx, st.get('try'), where + '.try')
-        ir['catch'] = body(ctx, st.get('catch'), where + '.catch')
-    elif kind == 'do_until':
-        frame: dict = {}
-        ctx.frames.append(frame)
-        steps = st.get('steps')
-        if not isinstance(steps, list) or not steps:
-            ctx.err(where, 'needs a non-empty "steps" list')
-            steps = []
-        ir['body'] = [s for s in (step_ir(ctx, x, f'{where}.steps[{k}]') for k, x in enumerate(steps)) if s is not None]
-        ir['until'] = scalar_node(ctx, st.get('until'), where + '.until', True)   # may read the body (wfa-flow-logic-api.md:409)
-        ctx.frames.pop()
-    elif kind == 'wait_duration':
-        ir['duration'] = duration_node(ctx, st.get('duration'), where + '.duration')
-        ir['schedule'] = record_ref_node(ctx, st['schedule'], where + '.schedule', 'schedule') if 'schedule' in st else None
-        if 'relative_to' in st:
-            if st.get('direction') not in ('before', 'after'):
-                ctx.err(where, '"direction" must be "before" or "after" when "relative_to" is given (wfa-flow-logic-api.md:491)')
-            rel, n = st['relative_to'], None
-            if isinstance(rel, dict) and 'pill' in rel:
-                n = pill_node(ctx, rel, where + '.relative_to')
+    match kind:
+        case 'if':
+            ir['cond'] = scalar_node(ctx, st.get('condition'), where + '.condition', True)
+            ir['body'] = body(ctx, st.get('steps'), where + '.steps')
+            ir['elifs'] = []
+            for k, e in enumerate(st.get('else_if') or []):
+                w = f'{where}.else_if[{k}]'
+                eid = check_id(ctx, e, w) if isinstance(e, dict) else None
+                if eid:
+                    ir['elifs'].append({'id': eid, 'key': step_key(ctx, eid), 'label': e.get('label', ''),
+                                        'cond': scalar_node(ctx, e.get('condition'), w + '.condition', True),
+                                        'body': body(ctx, e.get('steps'), w + '.steps')})
+            if st.get('else') is not None:
+                e, w = st['else'], where + '.else'
+                eid = check_id(ctx, e, w) if isinstance(e, dict) else None
+                ir['else'] = eid and {'id': eid, 'key': step_key(ctx, eid), 'label': e.get('label', ''),
+                                      'body': body(ctx, e.get('steps'), w + '.steps')}
             else:
-                ctx.err(where, '"relative_to" must be a pill to a date or date/time')
-            if n is not None and n[2] not in ('glide_date', 'glide_date_time', 'datetime', 'date', 'due_date', '?'):
-                ctx.err(where, f'"relative_to" must be a date or date/time pill, not {n[2]}')
-            ir.update(mode='relative', relative=n and ('tpl', [n]), direction=st.get('direction'))
-        else:
-            ir['mode'] = 'explicit'
+                ir['else'] = None
+        case 'for_each':
+            items, node = st.get('items'), None
+            if isinstance(items, dict) and 'pill' in items:
+                node = pill_node(ctx, items, where + '.items')
+            else:
+                ctx.err(where, '"items" must be a pill to a list: a lookUpRecords "Records" output or a list field (wfa-flow-logic-api.md:132)')
+            alias = st.get('item')
+            if not isinstance(alias, str) or not ID_RE.match(alias) or alias in RESERVED:
+                ctx.err(where, '"item" names the loop item, e.g. "open_task" ([a-z][a-z0-9_]*)')
+                alias = 'item'
+            item_table = None
+            if node is not None:
+                match node[2]:
+                    case 'records':
+                        item_table = node[3]
+                    case 'array.string' | '?':
+                        pass
+                    case other:
+                        ctx.err(where, f'"items" is a {other}, not a list — use a lookUpRecords "Records" output or a list field')
+            ctx.in_for_each += 1
+            ir.update(items=node, alias=alias,
+                      body=body(ctx, st.get('steps'), where + '.steps', {alias: {'kind': 'item', 'table': item_table}}))
+            ctx.in_for_each -= 1
+        case 'parallel':
+            if ctx.in_parallel:
+                ctx.err(where, 'a parallel block cannot contain another parallel block (wfa-flow-logic-api.md:266)')
+            br = st.get('branches')
+            if not isinstance(br, list) or len(br) < 2:
+                ctx.err(where, '"branches" must list at least two step lists')
+                br = []
+            ctx.in_parallel += 1
+            ir['branches'] = [body(ctx, b, f'{where}.branches[{k}]') for k, b in enumerate(br)]
+            ctx.in_parallel -= 1
+        case 'try_catch':
+            ir['try'] = body(ctx, st.get('try'), where + '.try')
+            ir['catch'] = body(ctx, st.get('catch'), where + '.catch')
+        case 'do_until':
+            frame: dict = {}
+            ctx.frames.append(frame)
+            steps = st.get('steps')
+            if not isinstance(steps, list) or not steps:
+                ctx.err(where, 'needs a non-empty "steps" list')
+                steps = []
+            ir['body'] = [s for s in (step_ir(ctx, x, f'{where}.steps[{k}]') for k, x in enumerate(steps)) if s is not None]
+            ir['until'] = scalar_node(ctx, st.get('until'), where + '.until', True)   # may read the body (wfa-flow-logic-api.md:409)
+            ctx.frames.pop()
+        case 'wait_duration':
+            ir['duration'] = duration_node(ctx, st.get('duration'), where + '.duration')
+            ir['schedule'] = record_ref_node(ctx, st['schedule'], where + '.schedule', 'schedule') if 'schedule' in st else None
+            if 'relative_to' in st:
+                if st.get('direction') not in ('before', 'after'):
+                    ctx.err(where, '"direction" must be "before" or "after" when "relative_to" is given (wfa-flow-logic-api.md:491)')
+                rel, n = st['relative_to'], None
+                if isinstance(rel, dict) and 'pill' in rel:
+                    n = pill_node(ctx, rel, where + '.relative_to')
+                else:
+                    ctx.err(where, '"relative_to" must be a pill to a date or date/time')
+                if n is not None and n[2] not in ('glide_date', 'glide_date_time', 'datetime', 'date', 'due_date', '?'):
+                    ctx.err(where, f'"relative_to" must be a date or date/time pill, not {n[2]}')
+                ir.update(mode='relative', relative=n and ('tpl', [n]), direction=st.get('direction'))
+            else:
+                ir['mode'] = 'explicit'
     if sid:
         ctx.frames[-1][sid] = {'kind': 'logic', 'action': kind, 'outputs': {}, 'tables': {}}
     return ir
@@ -712,17 +722,18 @@ def add_variable(ctx: Ctx, v, owner: str, where: str, order: int) -> None:
     if 'help' in v and not isinstance(v['help'], str):
         ctx.err(where, '"help" is text shown under the question')
     table, extra = info.get('table'), None
-    if extra_key == 'reference':
-        if known_table(ctx, where + '.reference', v.get('reference'), 'referenced table'):
-            extra = (info['extra']['prop'], ('str', v['reference']))
-            table = v['reference'] if typ == 'reference' else None   # a list collector answer is a string of sys_ids
-    elif extra_key == 'choices':
-        ch = v.get('choices')
-        if not isinstance(ch, dict) or not ch or not all(isinstance(k, str) and VAR_RE.match(k) and isinstance(t, str) and t.strip()
-                                                         for k, t in ch.items()):
-            ctx.err(where, f'a {typ} variable needs "choices": {{"<value>": "<label>", …}} (snake_case values)')
-        else:
-            extra = ('choices', ('choices', list(ch.items())))
+    match extra_key:
+        case 'reference':
+            if known_table(ctx, where + '.reference', v.get('reference'), 'referenced table'):
+                extra = (info['extra']['prop'], ('str', v['reference']))
+                table = v['reference'] if typ == 'reference' else None   # a list collector answer is a string of sys_ids
+        case 'choices':
+            ch = v.get('choices')
+            if not isinstance(ch, dict) or not ch or not all(isinstance(k, str) and VAR_RE.match(k) and isinstance(t, str) and t.strip()
+                                                             for k, t in ch.items()):
+                ctx.err(where, f'a {typ} variable needs "choices": {{"<value>": "<label>", …}} (snake_case values)')
+            else:
+                extra = ('choices', ('choices', list(ch.items())))
     ctx.variables[name] = {'name': name, 'label': v.get('label', ''), 'type': typ, 'builder': info['builder'],
                            'pill': info['pill'], 'table': table, 'extra': extra, 'mandatory': bool(v.get('mandatory')),
                            'help': v.get('help') or '', 'owner': owner, 'where': where, 'order': order}
@@ -826,34 +837,35 @@ def trigger_ir(ctx: Ctx, t) -> dict | None:
         if k not in ins:
             continue
         v, w = ins[k], f'trigger.{k}'
-        if i['type'] == 'Time':
-            ok = isinstance(v, dict) and set(v) <= {'hours', 'minutes', 'seconds', 'timezone'} and all(
-                isinstance(v.get(x, 0), int) for x in ('hours', 'minutes', 'seconds'))
-            if not ok:
-                ctx.err(w, 'time is {"hours": 9, "minutes": 0, "seconds": 0, "timezone": "UTC"} (trigger-api.md:188)')
-                continue
-            nodes.append((k, ('time', v.get('hours', 0), v.get('minutes', 0), v.get('seconds', 0), v.get('timezone', 'UTC'))))
-        elif i['type'] == 'Duration':
-            n = duration_node(ctx, v, w)
-            if n:
-                nodes.append((k, n))
-        elif i['type'] == 'enum':
-            if v not in i['values']:
-                ctx.err(w, f'must be one of {", ".join(i["values"])}')
-            else:
-                nodes.append((k, ('str', v)))
-        elif i['type'] == 'integer':
-            if not isinstance(v, int) or isinstance(v, bool):
-                ctx.err(w, 'must be a whole number')
-            else:
-                nodes.append((k, ('num', v)))
-        elif i['type'] in ('string', 'datetime') and isinstance(v, str):
-            node = ('str', v)
-            if k == 'condition':
-                node = check_query(ctx, node, ctx.trigger_table, w)
-            nodes.append((k, node))
-        else:
-            ctx.err(w, f'input "{k}" ({i["type"]}) is not supported by this skill — leave it out')
+        match i['type']:
+            case 'Time':
+                ok = isinstance(v, dict) and set(v) <= {'hours', 'minutes', 'seconds', 'timezone'} and all(
+                    isinstance(v.get(x, 0), int) for x in ('hours', 'minutes', 'seconds'))
+                if not ok:
+                    ctx.err(w, 'time is {"hours": 9, "minutes": 0, "seconds": 0, "timezone": "UTC"} (trigger-api.md:188)')
+                    continue
+                nodes.append((k, ('time', v.get('hours', 0), v.get('minutes', 0), v.get('seconds', 0), v.get('timezone', 'UTC'))))
+            case 'Duration':
+                n = duration_node(ctx, v, w)
+                if n:
+                    nodes.append((k, n))
+            case 'enum':
+                if v not in i['values']:
+                    ctx.err(w, f'must be one of {", ".join(i["values"])}')
+                else:
+                    nodes.append((k, ('str', v)))
+            case 'integer':
+                if not isinstance(v, int) or isinstance(v, bool):
+                    ctx.err(w, 'must be a whole number')
+                else:
+                    nodes.append((k, ('num', v)))
+            case 'string' | 'datetime' if isinstance(v, str):
+                node = ('str', v)
+                if k == 'condition':
+                    node = check_query(ctx, node, ctx.trigger_table, w)
+                nodes.append((k, node))
+            case _:
+                ctx.err(w, f'input "{k}" ({i["type"]}) is not supported by this skill — leave it out')
     return {'fluent': trig['fluent'], 'inputs': nodes}
 
 
@@ -902,7 +914,6 @@ def check_spec(spec, vocab: dict) -> tuple[list[str], dict | None]:
           'form': form, 'variables': list(ctx.variables.values())}
     return ctx.errors, ir
 
-
 # ------------------------------------------------------------------ rendering (Fluent)
 IND = '    '
 
@@ -913,67 +924,81 @@ def ts_str(s: str) -> str:
 
 
 def tpl_text(s: str) -> str:
+    """Text escaped for the inside of a TypeScript template literal."""
     return s.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
 
 
 def pill_ts(node) -> str:
+    """A pill node as wfa.dataPill(path, 'type')."""
     return f'wfa.dataPill({node[1]}, {ts_str(node[2])})'
 
 
 def ph_text(node) -> str:
+    """A placeholder's value when the user gave one, else PLACEHOLDER:<name>."""
     return node[2] if node[2] is not None else f'PLACEHOLDER:{node[1]}'
 
 
+def tpl_part_ts(part) -> str:
+    """One part of a template-literal node: text, a pill, or a placeholder."""
+    match part[0]:
+        case 'text':
+            return tpl_text(part[1])
+        case 'pill':
+            return '${' + pill_ts(part) + '}'
+        case _:
+            return tpl_text(ph_text(part))
+
+
+def approval_ts(node, depth: int) -> str:
+    """wfa.approvalRules: one OR rule set holding one rule (action-api.md:505-532)."""
+    users = ', '.join(value_ts(u, 0) for u in node[2])
+    groups = ', '.join(value_ts(g, 0) for g in node[3])
+    p = IND * depth
+    return '\n'.join([
+        'wfa.approvalRules({',
+        f"{p}{IND}conditionType: 'OR',",
+        f'{p}{IND}ruleSets: [',
+        f'{p}{IND * 2}{{',
+        f"{p}{IND * 3}action: 'ApprovesRejects',",
+        f"{p}{IND * 3}conditionType: 'AND',",
+        f"{p}{IND * 3}rules: [[{{ ruleType: {ts_str(node[1])}, users: [{users}], groups: [{groups}], manual: false }}]],",
+        f'{p}{IND * 2}}},',
+        f'{p}{IND}],',
+        f'{p}}})',
+    ])
+
+
 def value_ts(node, depth: int) -> str:
-    kind = node[0]
-    if kind == 'str':
-        return ts_str(node[1])
-    if kind == 'num':
-        return repr(node[1])
-    if kind == 'bool':
-        return 'true' if node[1] else 'false'
-    if kind == 'pill':
-        return pill_ts(node)
-    if kind == 'ph':
-        return ts_str(ph_text(node))
-    if kind == 'tpl':
-        out = []
-        for p in node[1]:
-            if p[0] == 'text':
-                out.append(tpl_text(p[1]))
-            elif p[0] == 'pill':
-                out.append('${' + pill_ts(p) + '}')
-            else:
-                out.append(tpl_text(ph_text(p)))
-        return '`' + ''.join(out) + '`'
-    if kind == 'dur':
-        return 'Duration({ ' + ', '.join(f'{k}: {v}' for k, v in node[1]) + ' })'
-    if kind == 'time':
-        return f'Time({{ hours: {node[1]}, minutes: {node[2]}, seconds: {node[3]} }}, {ts_str(node[4])})'
-    if kind == 'tv':
-        pad = IND * (depth + 1)
-        lines = ['TemplateValue({'] + [f'{pad}{col}: {value_ts(v, depth + 1)},' for col, v in node[1]] + [IND * depth + '})']
-        return '\n'.join(lines)
-    if kind == 'approval':
-        users = ', '.join(value_ts(u, 0) for u in node[2])
-        groups = ', '.join(value_ts(g, 0) for g in node[3])
-        p = IND * depth
-        return '\n'.join([
-            'wfa.approvalRules({',
-            f"{p}{IND}conditionType: 'OR',",
-            f'{p}{IND}ruleSets: [',
-            f'{p}{IND * 2}{{',
-            f"{p}{IND * 3}action: 'ApprovesRejects',",
-            f"{p}{IND * 3}conditionType: 'AND',",
-            f"{p}{IND * 3}rules: [[{{ ruleType: {ts_str(node[1])}, users: [{users}], groups: [{groups}], manual: false }}]],",
-            f'{p}{IND * 2}}},',
-            f'{p}{IND}],',
-            f'{p}}})',
-        ])
-    raise ValueError(f'unknown node {kind}')
+    """The TypeScript expression for an IR value node; depth indents multi-line values (TemplateValue, approvalRules)."""
+    match node[0]:
+        case 'str':
+            return ts_str(node[1])
+        case 'num':
+            return repr(node[1])
+        case 'bool':
+            return 'true' if node[1] else 'false'
+        case 'pill':
+            return pill_ts(node)
+        case 'ph':
+            return ts_str(ph_text(node))
+        case 'tpl':
+            return '`' + ''.join(tpl_part_ts(p) for p in node[1]) + '`'
+        case 'dur':
+            return 'Duration({ ' + ', '.join(f'{k}: {v}' for k, v in node[1]) + ' })'
+        case 'time':
+            return f'Time({{ hours: {node[1]}, minutes: {node[2]}, seconds: {node[3]} }}, {ts_str(node[4])})'
+        case 'tv':
+            pad = IND * (depth + 1)
+            return '\n'.join(['TemplateValue({'] + [f'{pad}{col}: {value_ts(v, depth + 1)},' for col, v in node[1]]
+                             + [IND * depth + '})'])
+        case 'approval':
+            return approval_ts(node, depth)
+        case kind:
+            raise ValueError(f'unknown node {kind}')
 
 
 def config_ts(key: str, label: str, extra: list[tuple[str, str]] = ()) -> str:
+    """The inline config object { $id: Now.ID['key'], <extra>, annotation: 'label' }."""
     parts = [f"$id: Now.ID[{ts_str(key)}]"] + [f'{k}: {v}' for k, v in extra]
     if label:
         parts.append(f'annotation: {ts_str(label)}')
@@ -981,84 +1006,141 @@ def config_ts(key: str, label: str, extra: list[tuple[str, str]] = ()) -> str:
 
 
 def arrow(param: str | None) -> str:
+    """An arrow-function head, with its parameter only when the body uses it (TS6133 otherwise)."""
     return f'({param}) => {{' if param else '() => {'
 
 
 def render_steps(ir: dict, steps: list, depth: int) -> list[str]:
+    """The lines of a list of steps at the given depth."""
     out: list[str] = []
     for st in steps:
         out += render_step(ir, st, depth)
     return out
 
 
-def render_step(ir: dict, st: dict, d: int) -> list[str]:
+def block(ir: dict, call: str, config: str, steps: list, d: int, param: str | None = None) -> list[str]:
+    """call(config, (param) => { steps }) — the shape of if / elseIf / else / forEach / doTheFollowing."""
+    p, p1 = IND * d, IND * (d + 1)
+    return [f'{p}{call}(', f'{p1}{config},', f'{p1}{arrow(param)}'] + render_steps(ir, steps, d + 2) + [f'{p1}}}', f'{p})']
+
+
+def render_action(ir: dict, st: dict, d: int) -> list[str]:
+    """wfa.action(action.core.<name>, { $id, annotation }, { inputs }), captured as a const only when used (action-api.md:51-65)."""
     p, p1, p2 = IND * d, IND * (d + 1), IND * (d + 2)
-    k = st['kind']
-    if k == 'action':
-        capture = f"const {st['id']} = " if st['id'] in ir['referenced'] else ''
-        lines = [f'{p}{capture}wfa.action(', f"{p1}{st['fluent']},", f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{']
-        lines += [f'{p2}{name}: {value_ts(v, d + 2)},' for name, v in st['inputs']]
-        return lines + [f'{p1}}}', f'{p})']
-    if k == 'if':
-        lines = [f'{p}wfa.flowLogic.if(', f"{p1}{config_ts(st['key'], st['label'], [('condition', value_ts(st['cond'], 0))])},",
-                 f'{p1}() => {{'] + render_steps(ir, st['body'], d + 2) + [f'{p1}}}', f'{p})']
-        for e in st['elifs']:
-            lines += [f'{p}wfa.flowLogic.elseIf(', f"{p1}{config_ts(e['key'], e['label'], [('condition', value_ts(e['cond'], 0))])},",
-                      f'{p1}() => {{'] + render_steps(ir, e['body'], d + 2) + [f'{p1}}}', f'{p})']
-        if st['else']:
-            e = st['else']
-            lines += [f'{p}wfa.flowLogic.else(', f"{p1}{config_ts(e['key'], e['label'])},",
-                      f'{p1}() => {{'] + render_steps(ir, e['body'], d + 2) + [f'{p1}}}', f'{p})']
-        return lines
-    if k == 'for_each':
-        param = st['alias'] if st['alias'] in ir['referenced'] else None
-        return [f'{p}wfa.flowLogic.forEach(', f"{p1}{pill_ts(st['items'])},", f"{p1}{config_ts(st['key'], st['label'])},",
-                f'{p1}{arrow(param)}'] + render_steps(ir, st['body'], d + 2) + [f'{p1}}}', f'{p})']
-    if k == 'parallel':
-        lines = [f'{p}wfa.flowLogic.doInParallel(', f"{p1}{config_ts(st['key'], st['label'])},"]
-        for b in st['branches']:
-            lines += [f'{p1}() => {{'] + render_steps(ir, b, d + 2) + [f'{p1}}},']
-        return lines + [f'{p})']
-    if k == 'try_catch':
-        return ([f'{p}wfa.flowLogic.tryCatch(', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{', f'{p2}try: () => {{']
-                + render_steps(ir, st['try'], d + 3) + [f'{p2}}},', f'{p2}catch: () => {{']
-                + render_steps(ir, st['catch'], d + 3) + [f'{p2}}},', f'{p1}}}', f'{p})'])
-    if k == 'do_until':
-        return ([f'{p}wfa.flowLogic.doTheFollowing(', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}() => {{']
-                + render_steps(ir, st['body'], d + 2) + [f"{p2}wfa.flowLogic.until({value_ts(st['until'], 0)})", f'{p1}}}', f'{p})'])
-    if k == 'wait_duration':
-        lines = [f'{p}wfa.flowLogic.waitForADuration({{', f"{p1}$id: Now.ID[{ts_str(st['key'])}],"]
-        if st['label']:
-            lines.append(f"{p1}annotation: {ts_str(st['label'])},")
-        if st['mode'] == 'relative':
-            lines += [f"{p1}durationType: 'relative_duration',", f"{p1}duration: {value_ts(st['duration'], 0)},",
-                      f"{p1}relativeOperator: {ts_str(st['direction'])},", f"{p1}relativeDatetime: {value_ts(st['relative'], 0)},"]
-        else:
-            lines += [f"{p1}durationType: 'explicit_duration',", f"{p1}duration: {value_ts(st['duration'], 0)},"]
-        if st['schedule'] is not None:
-            lines.append(f"{p1}schedule: {value_ts(st['schedule'], 0)},")
-        return lines + [f'{p}}})']
-    if k == 'end':
-        return [f"{p}wfa.flowLogic.endFlow({config_ts(st['key'], st['label'])})"]
-    if k == 'ask':
-        item = item_name(ir['name'])
-        task = f"{st['id']}__task"
-        lines = [f"{p}{'const ' + task + ' = ' if task in ir['referenced'] else ''}wfa.action(",
-                 f'{p1}action.core.createCatalogTask,', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{',
-                 f'{p2}ah_requested_item: {REQUESTED_ITEM},', f"{p2}ah_short_description: {value_ts(st['short'], 0)},"]
-        if st['fields'][1]:
-            lines.append(f"{p2}ah_fields: {value_ts(st['fields'], d + 2)},")
-        lines += [f'{p2}ah_wait: true,', f'{p2}template_catalog_item: `${{{item}}}`,',
-                  f"{p2}catalog_variables: {variables_ts(item, st['vars'])},", f'{p1}}}', f'{p})']
-        return lines + read_variables(p, st['id'] if st['id'] in ir['referenced'] else None,
-                                      st['key'] + '__answers', st['label'], item, st['vars'])
-    raise ValueError(k)
+    capture = f"const {st['id']} = " if st['id'] in ir['referenced'] else ''
+    lines = [f'{p}{capture}wfa.action(', f"{p1}{st['fluent']},", f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{']
+    lines += [f'{p2}{name}: {value_ts(v, d + 2)},' for name, v in st['inputs']]
+    return lines + [f'{p1}}}', f'{p})']
+
+
+def render_if(ir: dict, st: dict, d: int) -> list[str]:
+    """wfa.flowLogic.if, then each elseIf, then else (wfa-flow-logic-api.md:23-102)."""
+    lines = block(ir, 'wfa.flowLogic.if', config_ts(st['key'], st['label'], [('condition', value_ts(st['cond'], 0))]), st['body'], d)
+    for e in st['elifs']:
+        lines += block(ir, 'wfa.flowLogic.elseIf', config_ts(e['key'], e['label'], [('condition', value_ts(e['cond'], 0))]),
+                       e['body'], d)
+    if els := st['else']:
+        lines += block(ir, 'wfa.flowLogic.else', config_ts(els['key'], els['label']), els['body'], d)
+    return lines
+
+
+def render_for_each(ir: dict, st: dict, d: int) -> list[str]:
+    """wfa.flowLogic.forEach(pill, { $id }, (item) => {…}) (wfa-flow-logic-api.md:106-135)."""
+    p, p1 = IND * d, IND * (d + 1)
+    param = st['alias'] if st['alias'] in ir['referenced'] else None
+    return [f'{p}wfa.flowLogic.forEach(', f"{p1}{pill_ts(st['items'])},", f"{p1}{config_ts(st['key'], st['label'])},",
+            f'{p1}{arrow(param)}'] + render_steps(ir, st['body'], d + 2) + [f'{p1}}}', f'{p})']
+
+
+def render_parallel(ir: dict, st: dict, d: int) -> list[str]:
+    """wfa.flowLogic.doInParallel({ $id }, () => {…}, () => {…}) — rest-argument blocks (wfa-flow-logic-api.md:211-269)."""
+    p, p1 = IND * d, IND * (d + 1)
+    lines = [f'{p}wfa.flowLogic.doInParallel(', f"{p1}{config_ts(st['key'], st['label'])},"]
+    for b in st['branches']:
+        lines += [f'{p1}() => {{'] + render_steps(ir, b, d + 2) + [f'{p1}}},']
+    return lines + [f'{p})']
+
+
+def render_try_catch(ir: dict, st: dict, d: int) -> list[str]:
+    """wfa.flowLogic.tryCatch({ $id }, { try, catch }) (wfa-flow-logic-api.md:273-342)."""
+    p, p1, p2 = IND * d, IND * (d + 1), IND * (d + 2)
+    return ([f'{p}wfa.flowLogic.tryCatch(', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{', f'{p2}try: () => {{']
+            + render_steps(ir, st['try'], d + 3) + [f'{p2}}},', f'{p2}catch: () => {{']
+            + render_steps(ir, st['catch'], d + 3) + [f'{p2}}},', f'{p1}}}', f'{p})'])
+
+
+def render_do_until(ir: dict, st: dict, d: int) -> list[str]:
+    """wfa.flowLogic.doTheFollowing, with until(...) as the last statement (wfa-flow-logic-api.md:346-409)."""
+    lines = block(ir, 'wfa.flowLogic.doTheFollowing', config_ts(st['key'], st['label']), st['body'], d)
+    return lines[:-2] + [f"{IND * (d + 2)}wfa.flowLogic.until({value_ts(st['until'], 0)})"] + lines[-2:]
+
+
+def render_wait(ir: dict, st: dict, d: int) -> list[str]:
+    """wfa.flowLogic.waitForADuration, relative to a date or explicit (wfa-flow-logic-api.md:459-507).
+
+    With a schedule, a day of the duration is 24 hours of schedule time (the business-hours calculation, :493):
+    "N working days" needs a Monday–Friday all-day schedule, or the offset in schedule hours.
+    """
+    p, p1 = IND * d, IND * (d + 1)
+    lines = [f'{p}wfa.flowLogic.waitForADuration({{', f"{p1}$id: Now.ID[{ts_str(st['key'])}],"]
+    if st['label']:
+        lines.append(f"{p1}annotation: {ts_str(st['label'])},")
+    if st['mode'] == 'relative':
+        lines += [f"{p1}durationType: 'relative_duration',", f"{p1}duration: {value_ts(st['duration'], 0)},",
+                  f"{p1}relativeOperator: {ts_str(st['direction'])},", f"{p1}relativeDatetime: {value_ts(st['relative'], 0)},"]
+    else:
+        lines += [f"{p1}durationType: 'explicit_duration',", f"{p1}duration: {value_ts(st['duration'], 0)},"]
+    if st['schedule'] is not None:
+        lines.append(f"{p1}schedule: {value_ts(st['schedule'], 0)},")
+    return lines + [f'{p}}})']
+
+
+def render_ask(ir: dict, st: dict, d: int) -> list[str]:
+    """A blocking createCatalogTask carrying the asked variables, then getCatalogVariables for the answers (forms research §3a)."""
+    p, p1, p2 = IND * d, IND * (d + 1), IND * (d + 2)
+    item = item_name(ir['name'])
+    task = f"{st['id']}__task"
+    lines = [f"{p}{'const ' + task + ' = ' if task in ir['referenced'] else ''}wfa.action(",
+             f'{p1}action.core.createCatalogTask,', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{',
+             f'{p2}ah_requested_item: {REQUESTED_ITEM},', f"{p2}ah_short_description: {value_ts(st['short'], 0)},"]
+    if st['fields'][1]:
+        lines.append(f"{p2}ah_fields: {value_ts(st['fields'], d + 2)},")
+    lines += [f'{p2}ah_wait: true,', f'{p2}template_catalog_item: `${{{item}}}`,',
+              f"{p2}catalog_variables: {variables_ts(item, st['vars'])},", f'{p1}}}', f'{p})']
+    return lines + read_variables(p, st['id'] if st['id'] in ir['referenced'] else None,
+                                  st['key'] + '__answers', st['label'], item, st['vars'])
+
+
+def render_step(ir: dict, st: dict, d: int) -> list[str]:
+    """The lines of one step (an action, an ask or a flow-logic construct) at depth d."""
+    match st['kind']:
+        case 'action':
+            return render_action(ir, st, d)
+        case 'ask':
+            return render_ask(ir, st, d)
+        case 'if':
+            return render_if(ir, st, d)
+        case 'for_each':
+            return render_for_each(ir, st, d)
+        case 'parallel':
+            return render_parallel(ir, st, d)
+        case 'try_catch':
+            return render_try_catch(ir, st, d)
+        case 'do_until':
+            return render_do_until(ir, st, d)
+        case 'wait_duration':
+            return render_wait(ir, st, d)
+        case 'end':
+            return [f"{IND * d}wfa.flowLogic.endFlow({config_ts(st['key'], st['label'])})"]
+        case kind:
+            raise ValueError(kind)
 
 
 REQUESTED_ITEM = "`${wfa.dataPill(params.trigger.request_item, 'reference')}`"   # sample flow-trigger-catalog-item.now.ts:142
 
 
 def variables_ts(item: str, names: list[str]) -> str:
+    """[item.variables.a, item.variables.b, …]"""
     return '[' + ', '.join(f'{item}.variables.{n}' for n in names) + ']'
 
 
@@ -1072,39 +1154,49 @@ def read_variables(p: str, const: str | None, key: str, label: str, item: str, n
 
 
 def camel(name: str) -> str:
+    """kebab-case flow name → camelCase (new-employee-onboarding → newEmployeeOnboarding)."""
     head, *rest = name.split('-')
     return head + ''.join(w[:1].upper() + w[1:] for w in rest)
 
 
 def export_name(name: str) -> str:
+    """The flow's exported const: newEmployeeOnboardingFlow."""
     return camel(name) + 'Flow'
 
 
 def item_name(name: str) -> str:
+    """The catalog item's exported const: newEmployeeOnboardingItem."""
     return camel(name) + 'Item'
 
 
+def variable_ts(v: dict) -> str:
+    """One catalog variable: name: XVariable({ question, <extra>, mandatory?, order, helpText? }) (variables/*.md)."""
+    props = [f"question: {ts_str(v['label'])}"]
+    if v['extra'] and v['extra'][1][0] == 'choices':
+        props.append('choices: { ' + ', '.join(f'{k}: {{ label: {ts_str(t)}, sequence: {i + 1} }}'
+                                               for i, (k, t) in enumerate(v['extra'][1][1])) + ' }')
+    elif v['extra']:
+        props.append(f"{v['extra'][0]}: {value_ts(v['extra'][1], 0)}")
+    if v['mandatory'] and v['owner'] == 'form':     # asked variables are required on the task by the UI policy
+        props.append('mandatory: true')
+    props.append(f"order: {v['order']}")
+    if v['help']:
+        props.append(f"helpText: {ts_str(v['help'])}")
+    return f"{IND * 2}{v['name']}: {v['builder']}({{ {', '.join(props)} }}),"
+
+
 def render_catalog(ir: dict) -> list[str]:
-    """CatalogItem (catalogitem-api.md) + the two CatalogUiPolicy records (cataloguipolicy-api.md) for asked variables."""
+    """CatalogItem (catalogitem-api.md) + the two CatalogUiPolicy records (cataloguipolicy-api.md) for asked variables.
+
+    shortDescription is the one-line summary shown in the catalog (the flow title); description says who submits it.
+    """
     f, item = ir['form'], item_name(ir['name'])
     lines = [f'export const {item} = CatalogItem({{', f"{IND}$id: Now.ID[{ts_str(ir['key'] + '__item')}],",
-             f"{IND}name: {ts_str(ir['title'])},", f"{IND}shortDescription: {ts_str(ir['description'])},",
+             f"{IND}name: {ts_str(ir['title'])},", f"{IND}shortDescription: {ts_str(ir['title'])},",
              f"{IND}description: {ts_str(f['submitted_by'])},", f"{IND}flow: Now.ref('sys_hub_flow', {ts_str(ir['key'])}),",
              f"{IND}catalogs: [{value_ts(f['catalog'], 0)}],", f"{IND}categories: [{value_ts(f['category'], 0)}],",
              f'{IND}variables: {{']
-    for v in ir['variables']:
-        props = [f"question: {ts_str(v['label'])}"]
-        if v['extra'] and v['extra'][1][0] == 'choices':
-            props.append('choices: { ' + ', '.join(f'{k}: {{ label: {ts_str(t)}, sequence: {i + 1} }}'
-                                                   for i, (k, t) in enumerate(v['extra'][1][1])) + ' }')
-        elif v['extra']:
-            props.append(f"{v['extra'][0]}: {value_ts(v['extra'][1], 0)}")
-        if v['mandatory'] and v['owner'] == 'form':     # asked variables are required on the task by the UI policy
-            props.append('mandatory: true')
-        props.append(f"order: {v['order']}")
-        if v['help']:
-            props.append(f"helpText: {ts_str(v['help'])}")
-        lines.append(f"{IND * 2}{v['name']}: {v['builder']}({{ {', '.join(props)} }}),")
+    lines += [variable_ts(v) for v in ir['variables']]
     lines += [f'{IND}}},', '})', '']
     asked = [v for v in ir['variables'] if v['owner'] != 'form']
     if asked:
@@ -1123,6 +1215,7 @@ def render_catalog(ir: dict) -> list[str]:
 
 
 def render_flow(ir: dict) -> str:
+    """The whole .now.ts file: imports, the catalog item and UI policies when there is a form, then the Flow."""
     imports = (['action'] if ir['uses_action'] else []) + ['Flow', 'wfa', 'trigger']
     t = ir['trigger']
     tin = '{ ' + ', '.join(f'{k}: {value_ts(v, 0)}' for k, v in t['inputs']) + ' }' if t['inputs'] else '{}'

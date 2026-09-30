@@ -1756,7 +1756,8 @@
   "wait_duration": {
    "fluent": "wfa.flowLogic.waitForADuration({ $id, durationType, duration, \u2026 })",
    "doc": "docs/api/flow/wfa-flow-logic-api.md:459",
-   "spec": "{\"logic\":\"wait_duration\",\"duration\":{\"days\":2},\"relative_to\":{\"pill\":\u2026},\"direction\":\"before\",\"schedule\":{\"placeholder\":\u2026}}"
+   "spec": "{\"logic\":\"wait_duration\",\"duration\":{\"days\":2},\"relative_to\":{\"pill\":\u2026},\"direction\":\"before\",\"schedule\":{\"placeholder\":\u2026}}",
+   "note": "With a schedule, each day of the duration is 24 hours of schedule time (docs/api/flow/wfa-flow-logic-api.md:493, \"business-hours calculation\"), so {\"days\": 2} on an 8-hour weekday schedule is about 6 working days. For \"N working days\" the schedule placeholder must be a Monday\u2013Friday all-day (24h) schedule with holidays; otherwise give the offset in schedule hours (16 hours = 2 days of an 8h schedule)."
   },
   "end": {
    "fluent": "wfa.flowLogic.endFlow({ $id })",
@@ -1801,7 +1802,8 @@
    "waitForCondition.record": "docs/api/flow/action-api.md:411",
    "getAttachmentsOnRecord.source_record": "docs/api/flow/action-api.md:774",
    "createCatalogTask.ah_requested_item": "src/fluent/flow-trigger-catalog-item.now.ts:227",
-   "getCatalogVariables.requested_item": "src/fluent/flow-trigger-catalog-item.now.ts:142"
+   "getCatalogVariables.requested_item": "src/fluent/flow-trigger-catalog-item.now.ts:142",
+   "sendEmail.ah_to": "docs/api/flow/action-api.md:256"
   },
   "no_pills": {
    "sendEmail.ah_body": "docs/api/flow/action-api.md:256",

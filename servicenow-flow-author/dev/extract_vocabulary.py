@@ -63,6 +63,7 @@ INPUT_RULES = {
         'fireEvent.parm1': f'{ACTION_DOC}:390', 'fireEvent.parm2': f'{ACTION_DOC}:390',
         'waitForCondition.record': f'{ACTION_DOC}:411', 'getAttachmentsOnRecord.source_record': f'{ACTION_DOC}:774',
         'createCatalogTask.ah_requested_item': f'{SAMPLE_CAT}:227', 'getCatalogVariables.requested_item': f'{SAMPLE_CAT}:142',
+        'sendEmail.ah_to': f'{ACTION_DOC}:256',
     },
     'no_pills': {'sendEmail.ah_body': f'{ACTION_DOC}:256', 'sendSms.message': f'{GUIDE_DOC}:127'},
 }
@@ -78,7 +79,11 @@ LOGIC = {
     'do_until': {'fluent': 'wfa.flowLogic.doTheFollowing({ $id }, () => {…; wfa.flowLogic.until(…)})', 'doc': f'{LOGIC_DOC}:346',
                  'spec': '{"logic":"do_until","steps":[…],"until":…}'},
     'wait_duration': {'fluent': 'wfa.flowLogic.waitForADuration({ $id, durationType, duration, … })', 'doc': f'{LOGIC_DOC}:459',
-                      'spec': '{"logic":"wait_duration","duration":{"days":2},"relative_to":{"pill":…},"direction":"before","schedule":{"placeholder":…}}'},
+                      'spec': '{"logic":"wait_duration","duration":{"days":2},"relative_to":{"pill":…},"direction":"before","schedule":{"placeholder":…}}',
+                      'note': f'With a schedule, each day of the duration is 24 hours of schedule time ({LOGIC_DOC}:493, '
+                              '"business-hours calculation"), so {"days": 2} on an 8-hour weekday schedule is about 6 working days. '
+                              'For "N working days" the schedule placeholder must be a Monday–Friday all-day (24h) schedule with '
+                              'holidays; otherwise give the offset in schedule hours (16 hours = 2 days of an 8h schedule).'},
     'end': {'fluent': 'wfa.flowLogic.endFlow({ $id })', 'doc': f'{LOGIC_DOC}:187', 'spec': '{"logic":"end"}'},
 }
 UNSUPPORTED = {
@@ -388,6 +393,7 @@ def render_md(v: dict) -> str:
           '## Flow logic (`"logic": "<kind>"`)', '', '| logic | Fluent | spec shape | source |', '|---|---|---|---|']
     for k, g in v['logic'].items():
         L.append(f'| `{k}` | `{g["fluent"]}` | `{g["spec"]}` | {g["doc"]} |')
+    L += [''] + [f'- **{k}:** {g["note"]}' for k, g in v['logic'].items() if 'note' in g]
     L += ['', '## Not available — and what to write instead', '']
     for k, msg in v['unsupported'].items():
         L.append(f'- `{k}` — {msg}')

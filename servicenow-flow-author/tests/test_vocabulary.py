@@ -17,6 +17,12 @@ class VocabularyTest(unittest.TestCase):
         self.assertEqual(VOCAB['triggers']['scheduled_daily']['inputs']['time']['type'], 'Time')
         self.assertTrue(rc['doc'].startswith('docs/api/flow/trigger-api.md:'))
 
+    def test_schedule_waits_count_24h_days(self):   # wfa-flow-logic-api.md:493 business-hours calculation
+        note = VOCAB['logic']['wait_duration']['note']
+        self.assertIn('24 hours of schedule time', note)
+        self.assertIn('Monday–Friday all-day', note)
+        self.assertIn('sendEmail.ah_to', VOCAB['input_rules']['wrap_pill'])   # action-api.md:256
+
     def test_actions_from_action_api(self):
         documented = [k for k, a in VOCAB['actions'].items() if a['documented']]
         self.assertEqual(len(documented), 31)

@@ -71,7 +71,7 @@
   },
   "hr_rejection_notification": {
    "kind": "notification",
-   "description": "Notification on sc_req_item to HR when the manager rejects; include the approval comments (the reason)."
+   "description": "Notification on sc_req_item to HR when the manager does not approve (rejected, cancelled…); include the approval comments (the reason)."
   },
   "it_service_desk_group": {
    "kind": "group",
@@ -87,7 +87,7 @@
   },
   "working_days_schedule": {
    "kind": "schedule",
-   "description": "Working-days schedule (cmn_schedule sys_id) so 'two working days' skips weekends and holidays."
+   "description": "Schedule (cmn_schedule sys_id) that 'two working days' is counted on. The wait counts each day as 24 hours of schedule time (wfa-flow-logic-api.md:493, business-hours calculation), so use a Monday–Friday all-day (24h) schedule with holidays; with an 8-hour working-day schedule, 2 days would be about 6 working days (express the offset in schedule hours instead, e.g. 16 hours for 2 days of an 8h schedule)."
   },
   "task_reminder_notification": {
    "kind": "notification",
@@ -129,13 +129,13 @@
   },
   {
    "id": "check_rejected",
-   "label": "Refusée par le responsable ?",
+   "label": "Non approuvée par le responsable ?",
    "logic": "if",
    "condition": [
     {
      "pill": "ask_manager.approval_state"
     },
-    "=rejected"
+    "!=approved"
    ],
    "steps": [
     {
@@ -154,7 +154,7 @@
     },
     {
      "id": "end_rejected",
-     "label": "Fin : intégration refusée",
+     "label": "Fin : intégration non approuvée",
      "logic": "end"
     }
    ]

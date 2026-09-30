@@ -28,6 +28,8 @@ class GenerateTest(unittest.TestCase):
         self.assertIn(f"export const {ITEM} = CatalogItem({{\n"
                       "    $id: Now.ID['new_employee_onboarding__item'],\n"
                       "    name: 'New employee onboarding',\n", self.onb)
+        # shortDescription is a one-line summary (the flow title); description says who submits the form
+        self.assertIn("    name: 'New employee onboarding',\n    shortDescription: 'New employee onboarding',\n", self.onb)
         self.assertIn("    description: 'HR submits this form when it creates a new user record for an employee who hasn\\'t started yet.',\n"
                       "    flow: Now.ref('sys_hub_flow', 'new_employee_onboarding'),\n"
                       "    catalogs: ['PLACEHOLDER:service_catalog'],\n"
@@ -63,7 +65,7 @@ class GenerateTest(unittest.TestCase):
                       f"            {{\n                requested_item: {RITM},\n"
                       f"                template_catalog_item: `${{{ITEM}}}`,\n"
                       f"                catalog_variables: [{ITEM}.variables.new_hire, {ITEM}.variables.manager, ", self.onb)
-        self.assertIn("ah_to: wfa.dataPill(form.manager.email, 'string'),", self.onb)
+        self.assertIn("ah_to: `${wfa.dataPill(form.manager.email, 'string')}`,", self.onb)
         self.assertIn("ah_subject: `Onboarding of ${wfa.dataPill(form.new_hire.name, 'string')}: start date "
                       "${wfa.dataPill(form.start_date, 'glide_date')}`,", self.onb)
 
@@ -119,7 +121,7 @@ class GenerateTest(unittest.TestCase):
 
     def test_if_condition_pill(self):   # wfa-flow-logic-api.md:23, sample flow-trigger-record.now.ts:34
         self.assertIn("        wfa.flowLogic.if(\n            { $id: Now.ID['new_employee_onboarding__check_rejected'], "
-                      "condition: `${wfa.dataPill(ask_manager.approval_state, 'choice')}=rejected`, annotation: 'Rejected by the manager?' },\n"
+                      "condition: `${wfa.dataPill(ask_manager.approval_state, 'choice')}!=approved`, annotation: 'Not approved by the manager?' },\n"
                       "            () => {\n", self.onb)
 
     def test_else_if_and_else(self):   # wfa-flow-logic-api.md:52, :81
@@ -128,7 +130,7 @@ class GenerateTest(unittest.TestCase):
         self.assertIn("                wfa.flowLogic.else(\n                    { $id: Now.ID['all_constructs__other_state'], annotation: 'Any other state' },\n", self.all)
 
     def test_end_flow(self):   # wfa-flow-logic-api.md:187
-        self.assertIn("                wfa.flowLogic.endFlow({ $id: Now.ID['new_employee_onboarding__end_rejected'], annotation: 'Stop: onboarding rejected' })\n", self.onb)
+        self.assertIn("                wfa.flowLogic.endFlow({ $id: Now.ID['new_employee_onboarding__end_rejected'], annotation: 'Stop: onboarding not approved' })\n", self.onb)
 
     def test_parallel(self):   # wfa-flow-logic-api.md:211 — rest-argument blocks, not an array
         self.assertIn("        wfa.flowLogic.doInParallel(\n            { $id: Now.ID['new_employee_onboarding__setup'], annotation: 'Accounts and desk in parallel' },\n"
