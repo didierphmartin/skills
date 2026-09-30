@@ -73,5 +73,17 @@ class VocabularyTest(unittest.TestCase):
         self.assertIn('else_if', VOCAB['unsupported']['make_a_decision'])
 
 
+class RegenerationTest(unittest.TestCase):
+    def test_extractor_reproduces_the_committed_vocabulary(self):
+        import subprocess, sys, tempfile
+        sdk = Path.home() / 'Documents/synergyAI/servicenow-sdk-lab/node_modules/@servicenow'
+        if not sdk.is_dir():
+            self.skipTest('SDK lab not installed')
+        script = Path(__file__).resolve().parent.parent / 'dev' / 'extract_vocabulary.py'
+        with tempfile.TemporaryDirectory() as out:
+            subprocess.run([sys.executable, str(script), '--sdk', str(sdk), '--out', out], check=True, capture_output=True)
+            self.assertEqual(json.loads((Path(out) / 'fluent-vocabulary.json').read_text(encoding='utf-8')), VOCAB)
+
+
 if __name__ == '__main__':
     unittest.main()
