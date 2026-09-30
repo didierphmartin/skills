@@ -1375,6 +1375,8 @@ for moving the project to another machine.
                 asked = [(st['id'], v) for st in iter_steps(s['steps']) if isinstance(st.get('ask'), dict)
                          for v in st['ask'].get('variables') or []]
                 lines += [f"- Who submits this form and when: {form['submitted_by']}",
+                          f"- Catalog item listed in: catalog {self.listed_in(s, form, 'catalog')} / "
+                          f"category {self.listed_in(s, form, 'category')}",
                           '- Order form: ' + ', '.join(f"{v['label']} (`{v['name']}`, {v['type']})" for v in form['variables'])]
                 if asked:
                     lines.append('- Asked during the run (catalog tasks): '
@@ -1389,6 +1391,17 @@ for moving the project to another machine.
                     lines.append(f'    Note: {SCHEDULE_NOTE}.')
             lines.append('')
         return '\n'.join(lines)
+
+    @staticmethod
+    def listed_in(spec: dict, form: dict, key: str) -> str:
+        """`<placeholder>` (filled: <value> | to fill) for form.catalog / form.category.
+
+        Why: the README sends the reader to the item's catalog and category, so FLOWS.md must name them; the spec
+        always gives them as placeholders (form_ir), which the user fills with the instance's records.
+        """
+        name = form[key]['placeholder']
+        p = (spec.get('placeholders') or {}).get(name, {})
+        return f"`{name}` ({'filled: ' + p['value'] if 'value' in p else 'to fill'})"
 
     def zip(self) -> Path:
         """<out>/x_<vendor>_synergy.zip of the project without dependencies, build outputs or generated keys."""

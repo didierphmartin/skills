@@ -40,6 +40,14 @@ class ProjectTest(unittest.TestCase):
                       "employee who hasn't started yet.", flows)
         self.assertIn('- Order form: New hire (`new_hire`, reference), Manager (`manager`, reference), ', flows)
         self.assertIn('  - `hr_rejection_notification` (notification, to fill) — ', flows)
+        self.assertIn('- Catalog item listed in: catalog `service_catalog` (to fill) / category `hr_category` (to fill)', flows)
+
+    def test_filled_catalog_placeholder_shows_its_value(self):
+        spec = fixture('onboarding-en.json')
+        spec['placeholders']['service_catalog']['value'] = 'e0d08b13c3330100c8b837659bba8fb4'
+        run_cli(spec, self.out, '--vendor', '1234567')
+        self.assertIn('- Catalog item listed in: catalog `service_catalog` (filled: e0d08b13c3330100c8b837659bba8fb4) '
+                      '/ category `hr_category` (to fill)', (self.proj / 'FLOWS.md').read_text())
 
     def test_zip_holds_the_project_without_build_outputs(self):
         run_cli(fixture('onboarding-en.json'), self.out, '--vendor', '1234567')
@@ -79,6 +87,11 @@ class ProjectTest(unittest.TestCase):
         r = run_cli(minimal(title='Log every new incident'), self.out)
         self.assertIn('(existing; 1 flow)', r.stdout)
         self.assertIn("name: 'Log every new incident'", (self.proj / 'src/fluent/flows/log-new-incident.now.ts').read_text())
+        flows = (self.proj / 'FLOWS.md').read_text()
+        self.assertEqual(flows.count('\n## '), 1, flows)
+        self.assertEqual(flows.count('## Log every new incident\n'), 1, flows)
+        self.assertNotIn('## Log new incident\n', flows)
+        self.assertEqual(flows.count('`src/fluent/flows/log-new-incident.now.ts`'), 1, flows)
 
     def test_vendor_missing_asks_once_and_writes_nothing(self):   # Review Focus 5
         r = run_cli(minimal(), self.out)
