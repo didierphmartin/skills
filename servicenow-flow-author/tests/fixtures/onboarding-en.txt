@@ -1,0 +1,17 @@
+New employee onboarding
+
+When HR creates a new user record for an employee who hasn't started yet, start the onboarding.
+
+First ask the new hire's manager to approve the onboarding and confirm the equipment list. If the manager rejects it, notify HR with the reason and stop there.
+
+Once approved, in parallel:
+- create a task for the IT service desk to set up the accounts (email, VPN, the department's apps);
+- create a task for Facilities to prepare the desk and the badge.
+
+For each item on the approved equipment list (laptop, monitor, phone…), create a separate hardware request task for the IT hardware team.
+
+Send the new hire's manager an email summarising what was requested and the start date.
+
+Two working days before the start date, check that all the tasks are closed. If some are still open, remind the assignment groups; if they're still open on the start date, escalate to the IT manager and inform HR.
+
+On the start date, send the new hire a welcome email with their first-day information, and log that onboarding is complete.
