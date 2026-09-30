@@ -1488,9 +1488,9 @@ def main(argv: list[str] | None = None) -> int:
     if ir['form']:
         print(f'catalog item: "{ir["title"]}" — {len(ir["variables"])} variables; the flow starts when someone orders it '
               f'(who and when: {ir["form"]["submitted_by"]})')
-    print(f'NEXT: reply in 3–5 lines — the flow title, the folder {proj}, the placeholders to fill, and the commands '
-          '`npx now-sdk build` then `npx now-sdk install` (first time in that folder: `npm install` and '
-          '`npx now-sdk auth --add https://<instance>.service-now.com --type basic`).')
+    to_fill = [pn for pn, p in phs.items() if 'value' not in p]
+    print(f'NEXT: your reply is exactly the lines of SKILL.md rule 6, nothing else — flow "{ir["title"]}", app {proj.name} '
+          f'({flows} flow{"s" if flows != 1 else ""}), placeholders to fill: {", ".join(to_fill) or "none (skip that line)"}.')
     return 0
 
 

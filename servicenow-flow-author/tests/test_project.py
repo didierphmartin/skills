@@ -32,7 +32,7 @@ class ProjectTest(unittest.TestCase):
         self.assertIn('(created; 1 flow)', r.stdout)
         self.assertIn('  working_days_schedule (schedule) — ', r.stdout)
         self.assertIn('catalog item: "New employee onboarding" — 6 variables; the flow starts when someone orders it', r.stdout)
-        self.assertIn('NEXT: reply in 3–5 lines', r.stdout)
+        self.assertIn('NEXT: your reply is exactly the lines of SKILL.md rule 6', r.stdout)
         flows = (self.proj / 'FLOWS.md').read_text()
         self.assertIn('## New employee onboarding', flows)
         self.assertIn('- Trigger: service_catalog — ordering the catalog item "New employee onboarding"', flows)

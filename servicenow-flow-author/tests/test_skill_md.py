@@ -77,7 +77,26 @@ class CurrentBehaviourDocTest(unittest.TestCase):
 
     def test_one_auth_command_form(self):
         auth = 'npx now-sdk auth --add https://<instance>.service-now.com --type basic'
-        for f in ('SKILL.md', 'references/deploy.md', 'scripts/create.py'):
+        for f in ('references/deploy.md', 'scripts/create.py'):   # SKILL.md's reply carries no prerequisites
             text = (SKILL / f).read_text(encoding='utf-8')
             self.assertIn(auth, text, f)
             self.assertNotIn('auth --add <instance>', text, f)
+
+
+class ReplyTemplateTest(unittest.TestCase):
+    """The reply is a fixed template (a fresh agent ignored "3–5 lines" and wrote ~15): pin its lines and order."""
+
+    LINES = ('✅ <flow title> — added to x_<code>_synergy (<N> flow(s) in the app).',
+             '📁 ~/Documents/synergyAI/outputs/servicenow/x_<code>_synergy/',
+             '✏️ Fill before installing: <comma-separated placeholder names> (details in FLOWS.md).',
+             '▶️ In that folder: npx now-sdk build, then npx now-sdk install.',
+             '⚠️ <one sentence: what was left out or approximated>')
+
+    def test_rule_6_is_the_template_in_order(self):
+        skill = (SKILL / 'SKILL.md').read_text(encoding='utf-8')
+        rule = skill.split('6. **Your reply IS these lines', 1)[1].split('## Steps', 1)[0]
+        block = rule.split('```\n', 1)[1].split('```', 1)[0]
+        self.assertEqual([l.strip() for l in block.strip().splitlines()], list(self.LINES))
+        self.assertIn('nothing else', rule)
+        self.assertNotIn('3–5 lines', skill)
+        self.assertIn("rule 6's lines", skill)          # step 6 points at the template
