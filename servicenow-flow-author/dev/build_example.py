@@ -13,7 +13,7 @@ MAPPING = [
     ("When HR creates a new user record for an employee who hasn't started yet, start the onboarding",
      'trigger `service_catalog`: HR orders the onboarding catalog item right after creating the user; the sentence becomes '
      '`form.submitted_by` (the catalog item\'s description and "Who submits this form and when" in FLOWS.md)'),
-    ('(the data the steps need)', '`form.variables`: new hire, manager, department (reference), start date (date), '
+    ('What the steps need to know (order form)', '`form.variables`: new hire, manager, department (reference), start date (date), '
      'equipment (list_collector on `cmdb_model`), first-day information (multi_line_text)'),
     ("ask the new hire's manager to approve the onboarding and confirm the equipment list",
      '`askForApproval` on the requested item (`trigger.request_item`, `sc_req_item`), approver `form.manager`: the manager '
@@ -33,7 +33,7 @@ MAPPING = [
      '`wait_duration` 2 days `before` `form.start_date` with a `working_days_schedule` placeholder → `lookUpRecords` open '
      '`sc_task` of the request item → `if` Count > 0 → `for_each` → `sendNotification`'),
     ("if they're still open on the start date, escalate to the IT manager and inform HR",
-     '`wait_duration` 9 hours `after` `form.start_date` → `lookUpRecords` → `if` → two `sendNotification`'),
+     '`wait_duration` 9 hours `after` `form.start_date` (the morning of the start date: the date alone is midnight, so 9h after is 9:00; the schedule caveat applies to every `wait_duration` with a schedule: a schedule "day" = 24h of schedule time) → `lookUpRecords` → `if` → two `sendNotification`'),
     ('welcome email with their first-day information, and log',
      '`sendNotification` (placeholder on the request item, which can show the First-day information variable; a '
      '`sendEmail` body cannot carry it), then `log`'),
@@ -60,8 +60,11 @@ def build() -> str:
          '## The procedure (French)', '', quote((FIX / 'onboarding-fr.txt').read_text(encoding='utf-8')), '',
          '## How each sentence maps', '', '| Procedure | Spec |', '|---|---|']
     L += [f'| {a} | {b} |' for a, b in MAPPING]
-    L += ['', 'The French spec is the same flow: same ids, variables and structure, every `label`, question, subject, body '
-          'and message in French, and its own `name` (`integration-nouvel-employe`).', '',
+    L += ['', 'Placeholders: every instance record the procedure cannot name (groups, notifications, schedules, catalog, category) is '
+          'declared once in the spec\'s `placeholders` block (`kind`, `description`, optional `value`) and referenced as '
+          '`{"placeholder": "<name>"}`; the generated flow carries `\'PLACEHOLDER:<name>\'` and FLOWS.md lists each one for the user to fill.', '',
+          'The French spec is the same flow: same ids, variables and structure, every `label`, question, subject, body, '
+          'message and placeholder `description` in French, and its own `name` (`integration-nouvel-employe`).', '',
           '## Spec (English)', '', '```json', json.dumps(en, indent=2, ensure_ascii=False), '```', '',
           '## Spec (French)', '', '```json', json.dumps(fr, indent=2, ensure_ascii=False), '```', '',
           '## Generated flow (English) — `src/fluent/flows/new-employee-onboarding.now.ts`', '', '```ts',

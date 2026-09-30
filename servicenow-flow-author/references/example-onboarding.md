@@ -47,17 +47,19 @@ The procedure a user pastes, the spec you write, and the flow `create.py` genera
 | Procedure | Spec |
 |---|---|
 | When HR creates a new user record for an employee who hasn't started yet, start the onboarding | trigger `service_catalog`: HR orders the onboarding catalog item right after creating the user; the sentence becomes `form.submitted_by` (the catalog item's description and "Who submits this form and when" in FLOWS.md) |
-| (the data the steps need) | `form.variables`: new hire, manager, department (reference), start date (date), equipment (list_collector on `cmdb_model`), first-day information (multi_line_text) |
+| What the steps need to know (order form) | `form.variables`: new hire, manager, department (reference), start date (date), equipment (list_collector on `cmdb_model`), first-day information (multi_line_text) |
 | ask the new hire's manager to approve the onboarding and confirm the equipment list | `askForApproval` on the requested item (`trigger.request_item`, `sc_req_item`), approver `form.manager`: the manager approves the request that carries the equipment list |
 | If the manager rejects it, notify HR with the reason and stop there | `if` approval_state != approved (any outcome other than approved takes the stop path) → `sendNotification` (placeholder; the notification shows the approval comments) + `end` |
 | in parallel: a task for the IT service desk … a task for Facilities | `parallel` with two `createCatalogTask` on the request item, `ah_wait: false`, group placeholders |
 | For each item on the approved equipment list … a separate hardware request task | a list collector answer is a comma-separated string of sys_ids, not an array (`forEach` iterates arrays only: wfa-flow-logic-api.md:134-135), so `lookUpRecords` on `cmdb_model` with `sys_idIN` + the answer → `for_each` over `Records` → one `createCatalogTask` per item |
 | Send the new hire's manager an email summarising what was requested and the start date | `sendEmail` to `form.manager.email`; the new hire and the start date go in the subject (an email body takes no pills: action-api.md:256), the body lists what was requested |
 | Two working days before the start date, check … remind the assignment groups | `wait_duration` 2 days `before` `form.start_date` with a `working_days_schedule` placeholder → `lookUpRecords` open `sc_task` of the request item → `if` Count > 0 → `for_each` → `sendNotification` |
-| if they're still open on the start date, escalate to the IT manager and inform HR | `wait_duration` 9 hours `after` `form.start_date` → `lookUpRecords` → `if` → two `sendNotification` |
+| if they're still open on the start date, escalate to the IT manager and inform HR | `wait_duration` 9 hours `after` `form.start_date` (the morning of the start date: the date alone is midnight, so 9h after is 9:00; the schedule caveat applies to every `wait_duration` with a schedule: a schedule "day" = 24h of schedule time) → `lookUpRecords` → `if` → two `sendNotification` |
 | welcome email with their first-day information, and log | `sendNotification` (placeholder on the request item, which can show the First-day information variable; a `sendEmail` body cannot carry it), then `log` |
 
-The French spec is the same flow: same ids, variables and structure, every `label`, question, subject, body and message in French, and its own `name` (`integration-nouvel-employe`).
+Placeholders: every instance record the procedure cannot name (groups, notifications, schedules, catalog, category) is declared once in the spec's `placeholders` block (`kind`, `description`, optional `value`) and referenced as `{"placeholder": "<name>"}`; the generated flow carries `'PLACEHOLDER:<name>'` and FLOWS.md lists each one for the user to fill.
+
+The French spec is the same flow: same ids, variables and structure, every `label`, question, subject, body, message and placeholder `description` in French, and its own `name` (`integration-nouvel-employe`).
 
 ## Spec (English)
 
@@ -574,47 +576,47 @@ The French spec is the same flow: same ids, variables and structure, every `labe
   "placeholders": {
     "service_catalog": {
       "kind": "catalog",
-      "description": "The catalog the onboarding item is listed in (sc_catalog sys_id), e.g. Service Catalog."
+      "description": "Le catalogue où l'article d'intégration est publié (sys_id de sc_catalog), par ex. Service Catalog."
     },
     "hr_category": {
       "kind": "category",
-      "description": "The category HR finds the item in (sc_category sys_id)."
+      "description": "La catégorie où les RH trouvent l'article (sys_id de sc_category)."
     },
     "hr_rejection_notification": {
       "kind": "notification",
-      "description": "Notification on sc_req_item to HR when the manager does not approve (rejected, cancelled…); include the approval comments (the reason)."
+      "description": "Notification sur sc_req_item envoyée aux RH lorsque le responsable n'approuve pas (refus, annulation…) ; elle doit afficher les commentaires d'approbation (le motif)."
     },
     "it_service_desk_group": {
       "kind": "group",
-      "description": "IT service desk assignment group (sys_id)."
+      "description": "Groupe d'affectation du centre de services informatiques (sys_id)."
     },
     "facilities_group": {
       "kind": "group",
-      "description": "Facilities assignment group (sys_id)."
+      "description": "Groupe d'affectation des Services généraux (sys_id)."
     },
     "hardware_group": {
       "kind": "group",
-      "description": "IT hardware team assignment group (sys_id)."
+      "description": "Groupe d'affectation de l'équipe matériel informatique (sys_id)."
     },
     "working_days_schedule": {
       "kind": "schedule",
-      "description": "Schedule (cmn_schedule sys_id) that 'two working days' is counted on. The wait counts each day as 24 hours of schedule time (wfa-flow-logic-api.md:493, business-hours calculation), so use a Monday–Friday all-day (24h) schedule with holidays; with an 8-hour working-day schedule, 2 days would be about 6 working days (express the offset in schedule hours instead, e.g. 16 hours for 2 days of an 8h schedule)."
+      "description": "Horaire (sys_id de cmn_schedule) sur lequel « deux jours ouvrés » est compté. L'attente compte chaque jour comme 24 heures d'horaire (wfa-flow-logic-api.md:493, calcul en heures ouvrables) ; utiliser donc un horaire du lundi au vendredi sur 24 h avec les jours fériés ; avec un horaire de journée de 8 heures, 2 jours équivaudraient à environ 6 jours ouvrés (exprimer plutôt le décalage en heures d'horaire, par ex. 16 heures pour 2 jours d'un horaire de 8 h)."
     },
     "task_reminder_notification": {
       "kind": "notification",
-      "description": "Notification on sc_task reminding the assignment group that the task must be closed before the start date."
+      "description": "Notification sur sc_task qui rappelle au groupe d'affectation que la tâche doit être fermée avant la date de début."
     },
     "it_manager_escalation_notification": {
       "kind": "notification",
-      "description": "Notification on sc_req_item to the IT manager: onboarding tasks still open on the start date."
+      "description": "Notification sur sc_req_item au responsable informatique : tâches d'intégration encore ouvertes à la date de début."
     },
     "hr_escalation_notification": {
       "kind": "notification",
-      "description": "Notification on sc_req_item to HR: onboarding tasks still open on the start date."
+      "description": "Notification sur sc_req_item aux RH : tâches d'intégration encore ouvertes à la date de début."
     },
     "welcome_notification": {
       "kind": "notification",
-      "description": "Notification on sc_req_item to the new hire (the New hire variable) with the First-day information variable — an email body cannot carry pills (action-api.md:256)."
+      "description": "Notification sur sc_req_item à la nouvelle recrue (la variable Nouvelle recrue) avec la variable Informations pour le premier jour ; le corps d'un courriel ne peut pas contenir de pilules (action-api.md:256)."
     }
   },
   "steps": [
