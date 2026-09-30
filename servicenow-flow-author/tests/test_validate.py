@@ -232,6 +232,28 @@ class CatalogValidateTest(unittest.TestCase):
         s['steps'].append({'id': 'read', 'label': 'r', 'action': 'getCatalogVariables', 'inputs': {}})
         one(errors_of(s), 'getCatalogVariables is written by the script', 'form.<variable>')
 
+    def test_instance_records_are_never_typed_names(self):
+        def task(fv):
+            return {'id': 't', 'label': 'Task', 'action': 'createCatalogTask', 'inputs': {
+                'ah_requested_item': {'pill': 'trigger.request_item'}, 'ah_short_description': 'Do it',
+                'ah_fields': fv, 'ah_wait': False}}
+        one(errors_of(with_ask(task({'assignment_group': 'Network team'}))), 'assignment_group', 'placeholder')
+        self.assertEqual(errors_of(with_ask(task({'assignment_group': {'placeholder': 'security_group'}}))), [])
+        appr = {'id': 'ap', 'label': 'Approve', 'action': 'askForApproval', 'inputs': {
+            'record': {'pill': 'trigger.request_item'}, 'table': 'sc_req_item',
+            'approval_conditions': {'rule': 'Any', 'users': ['bob.smith']}}}
+        one(errors_of(with_ask(appr)), 'users', 'placeholder')
+        one(errors_of(with_ask(ask(assigned_to='bob', assignment_group=None))), 'assigned_to', 'placeholder')
+        notif = {'id': 'nf', 'label': 'Notify', 'action': 'sendNotification', 'inputs': {
+            'notification': '0123456789abcdef0123456789abcdef', 'record': {'pill': 'trigger.request_item'},
+            'table_name': 'sc_req_item'}}
+        one(errors_of(with_ask(notif)), 'notification', 'placeholder')
+        notif['inputs']['notification'] = {'placeholder': 'security_group'}
+        self.assertEqual(errors_of(with_ask(notif)), [])
+
+    def test_placeholders_must_be_an_object(self):
+        one(errors_of(minimal(placeholders=['a'])), 'placeholders', 'object')
+
 
 if __name__ == '__main__':
     unittest.main()

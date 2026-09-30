@@ -57,6 +57,9 @@ def load_vocabulary(explicit: str | None = None) -> dict:
 
 
 # ------------------------------------------------------------------ validation → IR
+# IR value nodes (tuples): ('str', s) ('num', n) ('bool', b) ('pill', ts_expr, pill_type, table|None|'*')
+# ('tpl', [('text', s) | pill | ph]) ('ph', name, value|None) ('tv', [(column, node)]) ('dur', [(unit, n)])
+# ('approval', rule, users, groups) ('time', h, m, s, tz).  Steps are dicts with a 'kind'.
 class Ctx:
     """Validation state. Every check appends to .errors; the IR is built as it goes."""
 
@@ -108,6 +111,7 @@ class Ctx:
 
 
 def known_table(ctx: Ctx, where: str, table, what: str) -> bool:
+    """Report (and return False) unless table is in the SDK table index."""
     if not isinstance(table, str) or table not in ctx.tables:
         close = [t for t in ctx.tables if isinstance(table, str) and (table in t or t in table)][:5]
         ctx.err(where, f'{what} "{table}" is not in the SDK {SDK_VERSION} table index ({len(ctx.tables)} tables)'
@@ -118,6 +122,7 @@ def known_table(ctx: Ctx, where: str, table, what: str) -> bool:
 
 
 def walk_fields(ctx: Ctx, expr: list[str], ptype: str, table: str | None, segs: list[str], where: str, path: str):
+    """Follow dot-walked segs from a pill through the table index → (expr, type, table) or None."""
     for seg in segs:
         if table == '*':   # a record of a table the SDK does not type: fields unchecked
             expr, ptype = expr + [seg], 'string'
@@ -206,6 +211,7 @@ def form_pill(ctx: Ctx, rest: list[str], where: str, path: str):
 
 
 def pill_node(ctx: Ctx, value: dict, where: str):
+    """A {"pill": …} value → ('pill', ts_expr, pill_type, table)."""
     r = resolve_pill(ctx, value.get('pill'), where)
     if r is None:
         return None
@@ -225,6 +231,21 @@ def placeholder_node(ctx: Ctx, value: dict, where: str):
         return None
     ctx.used_placeholders.add(name)
     return ('ph', name, ctx.placeholders[name].get('value'))
+
+
+REF_KIND_HINT = {'assignment_group': 'group', 'groups': 'group', 'users': 'user', 'assigned_to': 'user',
+                 'notification': 'notification', 'schedule': 'schedule'}
+
+
+def record_ref_node(ctx: Ctx, value, where: str, field: str):
+    """An instance record (group, user, notification, schedule, any reference): a pill or a declared placeholder only —
+    a plain string would be an invented name or sys_id (the placeholder's "value" carries a known one)."""
+    if isinstance(value, dict) and ('pill' in value or 'placeholder' in value):
+        return scalar_node(ctx, value, where, False)
+    kind = REF_KIND_HINT.get(field, 'a matching kind')
+    ctx.err(where, f'"{field}" is a record that exists on the instance, so it is a pill or a placeholder, never a typed name or sys_id — '
+                   f'declare {{"placeholder": "<name>"}} under "placeholders" (kind {kind}; put a known sys_id in its "value")')
+    return None
 
 
 def scalar_node(ctx: Ctx, value, where: str, allow_text: bool, allow_pill: bool = True):
@@ -313,8 +334,8 @@ def approval_node(ctx: Ctx, value, where: str):
     if not isinstance(value, dict) or value.get('rule') not in ('Any', 'All') or set(value) - {'rule', 'users', 'groups'}:
         ctx.err(where, 'approval_conditions is {"rule": "Any"|"All", "users": [pills/placeholders], "groups": [pills/placeholders]} (action-api.md:516)')
         return None
-    users = [scalar_node(ctx, u, where + '.users', False) for u in value.get('users', [])]
-    groups = [scalar_node(ctx, g, where + '.groups', False) for g in value.get('groups', [])]
+    users = [record_ref_node(ctx, u, where + '.users', 'users') for u in value.get('users', [])]
+    groups = [record_ref_node(ctx, g, where + '.groups', 'groups') for g in value.get('groups', [])]
     if None in users or None in groups:
         return None
     if not users and not groups:
@@ -332,13 +353,18 @@ def template_value_node(ctx: Ctx, value, table: str | None, where: str):
         if table and ctx.field_info(table, field) is None:
             ctx.err(where, f'field "{field}" is not on table {table} (SDK {SDK_VERSION} table index) — use a field it has')
             continue
-        n = scalar_node(ctx, v, f'{where}.{field}', False)
+        info = ctx.field_info(table, field) if table else None
+        if field in REF_KIND_HINT or (info and info[0] == 'reference'):
+            n = record_ref_node(ctx, v, f'{where}.{field}', field)
+        else:
+            n = scalar_node(ctx, v, f'{where}.{field}', False)
         if n is not None:
             items.append((field, n))
     return ('tv', items)
 
 
 def input_node(ctx: Ctx, action: str, spec_in: dict, name: str, value, step_inputs: dict, where: str):
+    """Validate one action input against its vocabulary type and rules → a value node or None."""
     key = f'{action}.{name}'
     rules = ctx.vocab['input_rules']
     typ = spec_in['type']
@@ -365,7 +391,10 @@ def input_node(ctx: Ctx, action: str, spec_in: dict, name: str, value, step_inpu
     if typ == 'integer' and (isinstance(value, bool) or not isinstance(value, (int, dict))):
         ctx.err(where, 'must be a whole number')
         return None
-    node = scalar_node(ctx, value, where, allow_text=key in rules['template_text'], allow_pill=key not in rules['no_pills'])
+    if typ == 'reference':
+        node = record_ref_node(ctx, value, where, name)
+    else:
+        node = scalar_node(ctx, value, where, allow_text=key in rules['template_text'], allow_pill=key not in rules['no_pills'])
     if node is None:
         return None
     if node[0] == 'pill' and key in rules['wrap_pill']:
@@ -517,7 +546,7 @@ def step_ir(ctx: Ctx, st, where: str):
         ctx.frames.pop()
     elif kind == 'wait_duration':
         ir['duration'] = duration_node(ctx, st.get('duration'), where + '.duration')
-        ir['schedule'] = scalar_node(ctx, st['schedule'], where + '.schedule', False) if 'schedule' in st else None
+        ir['schedule'] = record_ref_node(ctx, st['schedule'], where + '.schedule', 'schedule') if 'schedule' in st else None
         if 'relative_to' in st:
             if st.get('direction') not in ('before', 'after'):
                 ctx.err(where, '"direction" must be "before" or "after" when "relative_to" is given (wfa-flow-logic-api.md:491)')
@@ -537,6 +566,7 @@ def step_ir(ctx: Ctx, st, where: str):
 
 
 def action_ir(ctx: Ctx, st: dict, sid: str | None, where: str):
+    """Validate an action step (name, inputs, pills) → the step IR."""
     name = st.get('action')
     actions = ctx.vocab['actions']
     if name not in actions or not actions[name]['documented']:
@@ -619,7 +649,7 @@ def ask_ir(ctx: Ctx, st: dict, sid: str | None, where: str):
     fields = []
     for k in ('assignment_group', 'assigned_to'):
         if k in a:
-            n = scalar_node(ctx, a[k], f'{where}.ask.{k}', False)
+            n = record_ref_node(ctx, a[k], f'{where}.ask.{k}', k)
             if n is not None:
                 fields.append((k, n))
     if not ('assignment_group' in a or 'assigned_to' in a):
@@ -746,6 +776,7 @@ def form_ir(ctx: Ctx, spec: dict) -> dict | None:
 
 
 def collect_ids(ctx: Ctx, steps, seen: dict) -> None:
+    """Gather every step id (nested included) into seen, reporting duplicates."""
     for st in steps if isinstance(steps, list) else []:
         if not isinstance(st, dict):
             continue
@@ -768,6 +799,7 @@ def collect_ids(ctx: Ctx, steps, seen: dict) -> None:
 
 
 def trigger_ir(ctx: Ctx, t) -> dict | None:
+    """Validate the trigger object → {fluent, inputs} IR."""
     if not isinstance(t, dict):
         ctx.err('trigger', 'must be an object with a "type"')
         return None
@@ -844,7 +876,10 @@ def check_spec(spec, vocab: dict) -> tuple[list[str], dict | None]:
     for k in sorted(set(spec) - {'name', 'title', 'description', 'language', 'trigger', 'steps', 'placeholders', 'form'}):
         msg = ' — a value a person supplies is a variable of the "form" or of an ask step' if k == 'new_fields' else ''
         ctx.err('spec', f'unknown key "{k}"{msg}')
-    for k, (pname, p) in enumerate((spec.get('placeholders') or {}).items()):
+    if not isinstance(spec.get('placeholders') or {}, dict):
+        ctx.err('placeholders', 'must be an object {"name": {"kind", "description"}, …}')
+        ctx.spec = spec = {k: v for k, v in spec.items() if k != 'placeholders'}
+    for pname, p in (spec.get('placeholders') or {}).items():
         if not PH_RE.match(pname) or not isinstance(p, dict) or not str(p.get('description', '')).strip() \
                 or p.get('kind') not in PH_KINDS or ('value' in p and not isinstance(p['value'], str)):
             ctx.err(f'placeholders.{pname}', f'needs a snake_case name, a "description" and a "kind" in {", ".join(PH_KINDS)} ("value" optional, a string)')
