@@ -1251,3 +1251,231 @@ def render_flow(ir: dict) -> str:
     lines += render_steps(ir, ir['steps'], 2)
     lines += [f'{IND}}}', ')', '']
     return '\n'.join(lines)
+
+
+# ------------------------------------------------------------------ project
+# One shared app per vendor (spec decision 2) under <out>/x_<vendor>_synergy/. The user builds and installs from that
+# folder every time (decision 7); the zip beside it only moves the project to another machine.
+ZIP_SKIP = ('node_modules/', 'dist/', 'target/', '.now/', 'src/fluent/generated/')
+NEED_VENDOR_TEXT = ('NEED_VENDOR — the app scope is x_<company code>_synergy and the company code is not known yet.\n'
+                    'NEXT: ask the user once for their instance\'s company code (in ServiceNow Studio, the prefix shown '
+                    'when creating an app, e.g. x_1234567 → 1234567), then run again with "--vendor", "<code>".')
+SCHEDULE_NOTE = ('a schedule "day" counts as 24h of schedule time — use a Mon–Fri all-day (24h) schedule with holidays '
+                 'for "N working days", or give the offset in schedule hours (e.g. 16h = 2 days of an 8h schedule)')
+
+
+def resolve_vendor(out: Path, given: str | None) -> tuple[str | None, str | None]:
+    """(vendor, error). Normalises " X_1234567 " → "1234567"; falls back to <out>/.vendor.
+
+    Why: the user is asked for the company code once; the script remembers it so a second flow joins the same app
+    instead of asking again. (None, None) means nobody gave it yet — the caller prints NEED_VENDOR.
+    """
+    raw = given
+    if raw is None and (out / '.vendor').is_file():
+        raw = (out / '.vendor').read_text(encoding='utf-8')
+    if raw is None:
+        return None, None
+    v = raw.strip().lower()
+    v = v[2:] if v.startswith('x_') else v
+    v = v.strip('_')
+    if not VENDOR_RE.match(v):
+        return None, (f'vendor code "{raw.strip()}" must be 1–8 lowercase letters or digits, so the scope '
+                      f'x_<code>_synergy stays within 18 characters (developing-apps-guide.md, scope rule)')
+    return v, None
+
+
+class Project:
+    """The shared app x_<vendor>_synergy under <out>: its files, FLOWS.md and the zip.
+
+    Why a class: every write needs the same output root, vendor, scope and project folder. First use creates the app
+    (now.config.json with a fresh scopeId, package.json, .gitignore, README.md); every run adds or replaces one flow
+    (its spec in flow-specs/ and its .now.ts), then regenerates FLOWS.md from all stored specs and re-zips. It never
+    writes or deletes src/fluent/generated/keys.ts: the build keeps each record's sys_id there, and losing it makes the
+    next install create duplicates.
+    """
+
+    def __init__(self, out: Path, vendor: str):
+        self.out, self.vendor = out, vendor
+        self.scope = f'x_{vendor}_synergy'
+        self.root = out / self.scope
+        self.written: list[str] = []
+
+    def exists(self) -> bool:
+        """The app was created by an earlier run (its now.config.json holds the scopeId that must never change)."""
+        return (self.root / 'now.config.json').is_file()
+
+    def put(self, rel: str, text: str) -> None:
+        """Write one file of the project and remember it for the report."""
+        f = self.root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding='utf-8')
+        self.written.append(rel)
+
+    def specs(self) -> dict[str, dict]:
+        """Every flow of the app by name, from flow-specs/*.json — the source of truth for FLOWS.md."""
+        folder = self.root / 'flow-specs'
+        if not folder.is_dir():
+            return {}
+        return {f.stem: json.loads(f.read_text(encoding='utf-8')) for f in sorted(folder.glob('*.json'))}
+
+    def package_json(self) -> str:
+        """package.json pinned to the SDK the vocabulary was read from (4.13.3) and the lab's glide/typescript."""
+        return json.dumps({'name': self.scope.replace('_', '-'), 'version': '1.0.0', 'private': True,
+                           'scripts': {'build': 'now-sdk build', 'deploy': 'now-sdk install'},
+                           'devDependencies': {'@servicenow/sdk': SDK_VERSION, '@servicenow/glide': '27.0.5',
+                                               'typescript': '5.8.2'}}, indent=2) + '\n'
+
+    def readme(self) -> str:
+        """The project README: how to build and install from this folder, every time (spec decision 7)."""
+        return f"""# SynergyAI flows ({self.scope})
+
+ServiceNow flows written by SynergyAI's servicenow-flow-author skill, as one ServiceNow SDK (Fluent) app.
+`FLOWS.md` lists every flow, its trigger and the placeholders to fill.
+
+First time (Node 20.18 or later):
+
+    npm install
+    npx now-sdk auth --add https://<instance>.service-now.com --type basic
+
+Every time:
+
+    npx now-sdk build
+    npx now-sdk install
+
+`now-sdk install` sends the whole app; flows that did not change stay as they are. Open Workflow Studio →
+Flows and look for the app "SynergyAI flows". A flow with an order form starts when someone orders its catalog
+item (Service Catalog → the category named in `FLOWS.md`).
+
+Schedule placeholders: {SCHEDULE_NOTE}.
+
+Build and install from this folder every time. Keep `src/fluent/generated/keys.ts` (it maps each step to its
+record on the instance; losing it makes the next install create duplicates). The zip next to this folder is only
+for moving the project to another machine.
+"""
+
+    def flows_md(self) -> str:
+        """FLOWS.md: per flow its file, trigger, who submits the form, the variables, and the placeholders to fill.
+
+        Regenerated from every stored spec on each run, oldest flow first, so adding a flow never loses another.
+        """
+        lines = [f'# SynergyAI flows ({self.scope})', '',
+                 'Fill every placeholder before `npx now-sdk install`: give SynergyAI the values (it re-runs the flow with '
+                 'them), or replace the `PLACEHOLDER:<name>` text in the flow file.', '']
+        for name, s in sorted(self.specs().items(), key=lambda kv: (kv[1].get('_generated_on', ''), kv[0])):
+            t, form = s['trigger'], s.get('form')
+            if form:     # decision 6: the procedure's start condition is who submits the order form
+                where = f' — ordering the catalog item "{s["title"]}"'
+            else:
+                where = f" on {t['table']}" if t.get('table') else ''
+            cond = f" — {t['condition']}" if t.get('condition') else ''
+            lines += [f"## {s['title']}", '',
+                      f'- File: `src/fluent/flows/{name}.now.ts` (spec: `flow-specs/{name}.json`)',
+                      f"- Trigger: {t['type']}{where}{cond}"]
+            if form:
+                asked = [(st['id'], v) for st in iter_steps(s['steps']) if isinstance(st.get('ask'), dict)
+                         for v in st['ask'].get('variables') or []]
+                lines += [f"- Who submits this form and when: {form['submitted_by']}",
+                          '- Order form: ' + ', '.join(f"{v['label']} (`{v['name']}`, {v['type']})" for v in form['variables'])]
+                if asked:
+                    lines.append('- Asked during the run (catalog tasks): '
+                                 + ', '.join(f"{v['label']} (`{v['name']}`, step `{sid}`)" for sid, v in asked))
+            lines += [f"- Language: {s['language']}", f"- Generated: {s.get('_generated_on', '')}"]
+            phs = s.get('placeholders') or {}
+            lines.append('- Placeholders to fill:' if phs else '- Placeholders to fill: none')
+            for pn, p in phs.items():
+                state = f"filled: {p['value']}" if 'value' in p else 'to fill'
+                lines.append(f"  - `{pn}` ({p['kind']}, {state}) — {p['description']}")
+                if p['kind'] == 'schedule':
+                    lines.append(f'    Note: {SCHEDULE_NOTE}.')
+            lines.append('')
+        return '\n'.join(lines)
+
+    def zip(self) -> Path:
+        """<out>/x_<vendor>_synergy.zip of the project without dependencies, build outputs or generated keys."""
+        zpath = self.out / f'{self.scope}.zip'
+        with zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED) as z:
+            for f in sorted(self.root.rglob('*')):
+                rel = f.relative_to(self.root).as_posix()
+                if f.is_file() and not any(rel.startswith(s) for s in ZIP_SKIP):
+                    z.write(f, f'{self.scope}/{rel}')
+        return zpath
+
+    def write(self, spec: dict, ir: dict, today: str) -> tuple[bool, Path]:
+        """Add or replace one flow (creating the app on first use); return (first_use, zip path)."""
+        first = not self.exists()
+        if first:
+            self.put('now.config.json', json.dumps({'scope': self.scope, 'scopeId': uuid.uuid4().hex,
+                                                    'name': 'SynergyAI flows'}, indent=2) + '\n')
+            self.put('package.json', self.package_json())
+            self.put('.gitignore', 'node_modules/\ndist/\ntarget/\n')
+            self.put('README.md', self.readme())
+        stored = dict(spec, _generated_on=today)
+        self.put(f'flow-specs/{ir["name"]}.json', json.dumps(stored, indent=2, ensure_ascii=False) + '\n')
+        self.put(f'src/fluent/flows/{ir["name"]}.now.ts', render_flow(ir))
+        self.put('FLOWS.md', self.flows_md())
+        (self.out / '.vendor').write_text(self.vendor + '\n', encoding='utf-8')
+        return first, self.zip()
+
+
+def write_project(out: Path, vendor: str, spec: dict, ir: dict, today: str) -> tuple[Path, list[str], bool, Path]:
+    """(project_dir, written_paths, first_use, zip_path) — the plan's entry point, one call for the CLI and the tests."""
+    project = Project(out, vendor)
+    first, zpath = project.write(spec, ir, today)
+    return project.root, project.written, first, zpath
+
+
+# ------------------------------------------------------------------ CLI
+def main(argv: list[str] | None = None) -> int:
+    """Check the spec, then write it into the shared app. Nothing is written unless the spec is VALID and the vendor
+    code is known; every problem is listed at once so the model fixes them in one revision."""
+    ap = argparse.ArgumentParser(description='Check a JSON flow spec and write it as a ServiceNow SDK (Fluent) flow.')
+    ap.add_argument('-i', '--input', required=True, help='the JSON flow spec (references/flow-spec.md)')
+    ap.add_argument('--vendor', help="the instance's company code (asked once, then remembered in <out>/.vendor)")
+    ap.add_argument('--out', default='/outputs/servicenow', help='output root (default /outputs/servicenow)')
+    ap.add_argument('--vocab', help='fluent-vocabulary.json (auto-detected)')
+    ap.add_argument('--today', default=datetime.date.today().isoformat(), help=argparse.SUPPRESS)
+    a = ap.parse_args(argv)
+    try:
+        spec = json.loads(Path(a.input).read_text(encoding='utf-8'))
+    except Exception as e:  # noqa: BLE001 — any unreadable input is reported the same way
+        print(f'error: cannot read the spec JSON: {e}', file=sys.stderr)
+        return 2
+    vocab = load_vocabulary(a.vocab)
+    out = Path(a.out)
+    vendor, verr = resolve_vendor(out, a.vendor)
+    errors, ir = check_spec(spec, vocab)
+    if verr:
+        errors.append(f'--vendor: {verr}')
+    if errors:
+        print(f'INVALID — {len(errors)} problem(s):\n  - ' + '\n  - '.join(errors), file=sys.stderr)
+        print('NEXT: fix every problem in one revision of the spec and run again (at most two revisions).', file=sys.stderr)
+        return 1
+    if vendor is None:
+        print(NEED_VENDOR_TEXT)
+        return 1
+    proj, written, first, zpath = write_project(out, vendor, spec, ir, a.today)
+    flows = len(list((proj / 'flow-specs').glob('*.json')))
+    print(f"VALID — flow \"{ir['title']}\" ({ir['name']})")
+    print(f"project: {proj} ({'created' if first else 'existing'}; {flows} flow{'s' if flows != 1 else ''})")
+    print('wrote:\n' + '\n'.join(f'  {w}' for w in written))
+    print(f'zip: {zpath}')
+    phs = ir['placeholders']
+    if phs:
+        print('placeholders (fill before install):')
+        for pn, p in phs.items():
+            print(f"  {pn} ({p['kind']}{', filled' if 'value' in p else ''}) — {p['description']}")
+    else:
+        print('placeholders: none')
+    for n in ir['notes']:
+        print(f'note: {n}')
+    if ir['form']:
+        print(f'catalog item: "{ir["title"]}" — {len(ir["variables"])} variables; the flow starts when someone orders it '
+              f'(who and when: {ir["form"]["submitted_by"]})')
+    print(f'NEXT: reply in 3–5 lines — the flow title, the folder {proj}, the placeholders to fill, and the commands '
+          '`npx now-sdk build` then `npx now-sdk install` (first time in that folder: `npm install` and '
+          '`npx now-sdk auth --add <instance> --type basic`).')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
