@@ -1,0 +1,31 @@
+{
+  "name": "p1-incident-escalation",
+  "title": "P1 incident escalation",
+  "description": "When a P1 incident is created, the group's manager approves a war room; a linked incident task tracks it.",
+  "language": "en",
+  "trigger": {"type": "record_created", "table": "incident", "condition": "priority=1^active=true"},
+  "placeholders": {
+    "war_room_group": {"kind": "group", "description": "Group that runs P1 war rooms (sys_user_group sys_id)."}
+  },
+  "steps": [
+    {"id": "group_info", "label": "Find the assignment group", "action": "lookUpRecord",
+     "inputs": {"table": "sys_user_group", "conditions": ["sys_id=", {"pill": "trigger.current.assignment_group"}]}},
+    {"id": "approve_war_room", "label": "Group manager approves a war room", "action": "askForApproval",
+     "inputs": {"record": {"pill": "trigger.current.sys_id"}, "table": "incident",
+                "approval_conditions": {"rule": "Any", "users": [{"pill": "group_info.Record.manager"}]}}},
+    {"id": "approved", "label": "Approved?", "logic": "if",
+     "condition": [{"pill": "approve_war_room.approval_state"}, "=approved"],
+     "steps": [
+       {"id": "war_room_task", "label": "Open the war-room task", "action": "createTask",
+        "inputs": {"task_table": "incident_task", "field_values": {
+          "short_description": "P1 war room", "parent": {"pill": "trigger.current.sys_id"},
+          "assignment_group": {"placeholder": "war_room_group"}}}}
+     ],
+     "else": {"id": "declined", "label": "Declined", "steps": [
+       {"id": "note_declined", "label": "Work note", "action": "updateRecord",
+        "inputs": {"table_name": "incident", "record": {"pill": "trigger.current.sys_id"},
+                   "values": {"work_notes": "War room declined by the group manager."}}}]}},
+    {"id": "log_p1", "label": "Log", "action": "log",
+     "inputs": {"log_level": "warn", "log_message": ["P1 ", {"pill": "trigger.current.number"}, ": ", {"pill": "approve_war_room.approval_state"}]}}
+  ]
+}

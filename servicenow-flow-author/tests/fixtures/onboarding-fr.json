@@ -1,0 +1,442 @@
+{
+ "name": "integration-nouvel-employe",
+ "title": "Intégration d'un nouvel employé",
+ "description": "Approbation du responsable, comptes informatiques et Services généraux en parallèle, une demande de matériel par article, relances deux jours ouvrés avant la date de début, escalade et bienvenue à la date de début.",
+ "language": "fr",
+ "trigger": {
+  "type": "service_catalog"
+ },
+ "form": {
+  "submitted_by": "Les RH soumettent ce formulaire lorsqu'elles créent la fiche utilisateur d'un nouvel employé qui n'a pas encore commencé.",
+  "catalog": {
+   "placeholder": "service_catalog"
+  },
+  "category": {
+   "placeholder": "hr_category"
+  },
+  "variables": [
+   {
+    "name": "new_hire",
+    "label": "Nouvelle recrue",
+    "type": "reference",
+    "reference": "sys_user",
+    "mandatory": true,
+    "help": "La fiche utilisateur que les RH viennent de créer."
+   },
+   {
+    "name": "manager",
+    "label": "Responsable",
+    "type": "reference",
+    "reference": "sys_user",
+    "mandatory": true
+   },
+   {
+    "name": "department",
+    "label": "Service",
+    "type": "reference",
+    "reference": "cmn_department",
+    "mandatory": true
+   },
+   {
+    "name": "start_date",
+    "label": "Date de début",
+    "type": "date",
+    "mandatory": true
+   },
+   {
+    "name": "equipment",
+    "label": "Équipement (ordinateur portable, écran, téléphone…)",
+    "type": "list_collector",
+    "reference": "cmdb_model",
+    "mandatory": true,
+    "help": "Une demande de matériel est créée pour chaque article."
+   },
+   {
+    "name": "first_day_info",
+    "label": "Informations pour le premier jour",
+    "type": "multi_line_text",
+    "mandatory": true,
+    "help": "Envoyées à la nouvelle recrue dans le courriel de bienvenue à la date de début."
+   }
+  ]
+ },
+ "placeholders": {
+  "service_catalog": {
+   "kind": "catalog",
+   "description": "The catalog the onboarding item is listed in (sc_catalog sys_id), e.g. Service Catalog."
+  },
+  "hr_category": {
+   "kind": "category",
+   "description": "The category HR finds the item in (sc_category sys_id)."
+  },
+  "hr_rejection_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to HR when the manager rejects; include the approval comments (the reason)."
+  },
+  "it_service_desk_group": {
+   "kind": "group",
+   "description": "IT service desk assignment group (sys_id)."
+  },
+  "facilities_group": {
+   "kind": "group",
+   "description": "Facilities assignment group (sys_id)."
+  },
+  "hardware_group": {
+   "kind": "group",
+   "description": "IT hardware team assignment group (sys_id)."
+  },
+  "working_days_schedule": {
+   "kind": "schedule",
+   "description": "Working-days schedule (cmn_schedule sys_id) so 'two working days' skips weekends and holidays."
+  },
+  "task_reminder_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_task reminding the assignment group that the task must be closed before the start date."
+  },
+  "it_manager_escalation_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to the IT manager: onboarding tasks still open on the start date."
+  },
+  "hr_escalation_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to HR: onboarding tasks still open on the start date."
+  },
+  "welcome_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to the new hire (the New hire variable) with the First-day information variable — an email body cannot carry pills (action-api.md:256)."
+  }
+ },
+ "steps": [
+  {
+   "id": "ask_manager",
+   "label": "Le responsable approuve l'intégration et la liste d'équipement",
+   "action": "askForApproval",
+   "inputs": {
+    "record": {
+     "pill": "trigger.request_item"
+    },
+    "table": "sc_req_item",
+    "approval_reason": "Approuver l'intégration et confirmer la liste d'équipement",
+    "approval_conditions": {
+     "rule": "Any",
+     "users": [
+      {
+       "pill": "form.manager"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "check_rejected",
+   "label": "Refusée par le responsable ?",
+   "logic": "if",
+   "condition": [
+    {
+     "pill": "ask_manager.approval_state"
+    },
+    "=rejected"
+   ],
+   "steps": [
+    {
+     "id": "notify_hr_rejected",
+     "label": "Prévenir les RH, avec le motif",
+     "action": "sendNotification",
+     "inputs": {
+      "notification": {
+       "placeholder": "hr_rejection_notification"
+      },
+      "record": {
+       "pill": "trigger.request_item"
+      },
+      "table_name": "sc_req_item"
+     }
+    },
+    {
+     "id": "end_rejected",
+     "label": "Fin : intégration refusée",
+     "logic": "end"
+    }
+   ]
+  },
+  {
+   "id": "setup",
+   "label": "Comptes et bureau en parallèle",
+   "logic": "parallel",
+   "branches": [
+    [
+     {
+      "id": "task_accounts",
+      "label": "Centre de services informatiques : messagerie, VPN, applications du service",
+      "action": "createCatalogTask",
+      "inputs": {
+       "ah_requested_item": {
+        "pill": "trigger.request_item"
+       },
+       "ah_short_description": "Configurer les comptes : messagerie, VPN et applications du service",
+       "ah_fields": {
+        "assignment_group": {
+         "placeholder": "it_service_desk_group"
+        }
+       },
+       "ah_wait": false
+      }
+     }
+    ],
+    [
+     {
+      "id": "task_facilities",
+      "label": "Services généraux : bureau et badge",
+      "action": "createCatalogTask",
+      "inputs": {
+       "ah_requested_item": {
+        "pill": "trigger.request_item"
+       },
+       "ah_short_description": "Préparer le bureau et le badge",
+       "ah_fields": {
+        "assignment_group": {
+         "placeholder": "facilities_group"
+        }
+       },
+       "ah_wait": false
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "id": "equipment_items",
+   "label": "Les articles de la liste d'équipement approuvée",
+   "action": "lookUpRecords",
+   "inputs": {
+    "table": "cmdb_model",
+    "conditions": [
+     "sys_idIN",
+     {
+      "pill": "form.equipment"
+     }
+    ],
+    "max_results": 50
+   }
+  },
+  {
+   "id": "each_item",
+   "label": "Une demande de matériel par article",
+   "logic": "for_each",
+   "items": {
+    "pill": "equipment_items.Records"
+   },
+   "item": "equipment_item",
+   "steps": [
+    {
+     "id": "task_hardware",
+     "label": "Demande de matériel pour cet article",
+     "action": "createCatalogTask",
+     "inputs": {
+      "ah_requested_item": {
+       "pill": "trigger.request_item"
+      },
+      "ah_short_description": {
+       "pill": "equipment_item.name"
+      },
+      "ah_fields": {
+       "assignment_group": {
+        "placeholder": "hardware_group"
+       }
+      },
+      "ah_wait": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "mail_manager",
+   "label": "Courriel récapitulatif au responsable",
+   "action": "sendEmail",
+   "inputs": {
+    "ah_to": {
+     "pill": "form.manager.email"
+    },
+    "ah_subject": [
+     "Intégration de ",
+     {
+      "pill": "form.new_hire.name"
+     },
+     " : date de début ",
+     {
+      "pill": "form.start_date"
+     }
+    ],
+    "ah_body": "Demandés : les comptes (messagerie, VPN, applications du service) au centre de services informatiques, le bureau et le badge aux Services généraux, et une demande de matériel pour chaque article de la liste d'équipement approuvée. La date de début figure dans l'objet.",
+    "record": {
+     "pill": "trigger.request_item"
+    },
+    "table_name": "sc_req_item"
+   }
+  },
+  {
+   "id": "wait_t2",
+   "label": "Attendre deux jours ouvrés avant la date de début",
+   "logic": "wait_duration",
+   "duration": {
+    "days": 2
+   },
+   "direction": "before",
+   "relative_to": {
+    "pill": "form.start_date"
+   },
+   "schedule": {
+    "placeholder": "working_days_schedule"
+   }
+  },
+  {
+   "id": "open_t2",
+   "label": "Tâches encore ouvertes",
+   "action": "lookUpRecords",
+   "inputs": {
+    "table": "sc_task",
+    "conditions": [
+     "active=true^request_item=",
+     {
+      "pill": "trigger.request_item"
+     }
+    ],
+    "max_results": 100
+   }
+  },
+  {
+   "id": "remind_open",
+   "label": "Des tâches encore ouvertes ?",
+   "logic": "if",
+   "condition": [
+    {
+     "pill": "open_t2.Count"
+    },
+    ">0"
+   ],
+   "steps": [
+    {
+     "id": "each_open",
+     "label": "Relancer chaque groupe d'affectation",
+     "logic": "for_each",
+     "items": {
+      "pill": "open_t2.Records"
+     },
+     "item": "open_task",
+     "steps": [
+      {
+       "id": "remind_group",
+       "label": "Relance au groupe d'affectation",
+       "action": "sendNotification",
+       "inputs": {
+        "notification": {
+         "placeholder": "task_reminder_notification"
+        },
+        "record": {
+         "pill": "open_task.sys_id"
+        },
+        "table_name": "sc_task"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wait_start",
+   "label": "Attendre la date de début, 9 h",
+   "logic": "wait_duration",
+   "duration": {
+    "hours": 9
+   },
+   "direction": "after",
+   "relative_to": {
+    "pill": "form.start_date"
+   }
+  },
+  {
+   "id": "open_start",
+   "label": "Tâches encore ouvertes à la date de début",
+   "action": "lookUpRecords",
+   "inputs": {
+    "table": "sc_task",
+    "conditions": [
+     "active=true^request_item=",
+     {
+      "pill": "trigger.request_item"
+     }
+    ],
+    "max_results": 100
+   }
+  },
+  {
+   "id": "escalate",
+   "label": "Encore ouvertes à la date de début ?",
+   "logic": "if",
+   "condition": [
+    {
+     "pill": "open_start.Count"
+    },
+    ">0"
+   ],
+   "steps": [
+    {
+     "id": "notify_it_manager",
+     "label": "Escalader au responsable informatique",
+     "action": "sendNotification",
+     "inputs": {
+      "notification": {
+       "placeholder": "it_manager_escalation_notification"
+      },
+      "record": {
+       "pill": "trigger.request_item"
+      },
+      "table_name": "sc_req_item"
+     }
+    },
+    {
+     "id": "notify_hr_open",
+     "label": "Informer les RH",
+     "action": "sendNotification",
+     "inputs": {
+      "notification": {
+       "placeholder": "hr_escalation_notification"
+      },
+      "record": {
+       "pill": "trigger.request_item"
+      },
+      "table_name": "sc_req_item"
+     }
+    }
+   ]
+  },
+  {
+   "id": "welcome",
+   "label": "Courriel de bienvenue avec les informations pour le premier jour",
+   "action": "sendNotification",
+   "inputs": {
+    "notification": {
+     "placeholder": "welcome_notification"
+    },
+    "record": {
+     "pill": "trigger.request_item"
+    },
+    "table_name": "sc_req_item"
+   }
+  },
+  {
+   "id": "log_done",
+   "label": "Journaliser que l'intégration est terminée",
+   "action": "log",
+   "inputs": {
+    "log_level": "info",
+    "log_message": [
+     "Intégration terminée pour ",
+     {
+      "pill": "form.new_hire.name"
+     }
+    ]
+   }
+  }
+ ]
+}

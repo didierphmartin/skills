@@ -1,0 +1,445 @@
+{
+ "name": "all-constructs",
+ "title": "All constructs",
+ "description": "Every variable kind, the ask step and every flow-logic construct and value kind the skill emits.",
+ "language": "en",
+ "trigger": {
+  "type": "service_catalog"
+ },
+ "form": {
+  "submitted_by": "The support team submits this form when a P1 incident needs a review.",
+  "catalog": {
+   "placeholder": "service_catalog"
+  },
+  "category": {
+   "placeholder": "it_category"
+  },
+  "variables": [
+   {
+    "name": "incident",
+    "label": "Incident",
+    "type": "reference",
+    "reference": "incident",
+    "mandatory": true
+   },
+   {
+    "name": "requester",
+    "label": "Requested for",
+    "type": "requested_for"
+   },
+   {
+    "name": "summary",
+    "label": "Summary",
+    "type": "single_line_text",
+    "mandatory": true,
+    "help": "One line."
+   },
+   {
+    "name": "urgency_level",
+    "label": "Urgency",
+    "type": "select_box",
+    "choices": {
+     "low": "Low",
+     "high": "High"
+    },
+    "mandatory": true
+   },
+   {
+    "name": "review_by",
+    "label": "Review by",
+    "type": "date_time"
+   },
+   {
+    "name": "affected_users",
+    "label": "Affected users",
+    "type": "list_collector",
+    "reference": "sys_user"
+   },
+   {
+    "name": "notify_customer",
+    "label": "Notify the customer",
+    "type": "yes_no"
+   },
+   {
+    "name": "contact_email",
+    "label": "Contact email",
+    "type": "email"
+   },
+   {
+    "name": "urgent",
+    "label": "Urgent",
+    "type": "checkbox"
+   }
+  ]
+ },
+ "placeholders": {
+  "service_catalog": {
+   "kind": "catalog",
+   "description": "Catalog the item is listed in (sc_catalog sys_id)."
+  },
+  "it_category": {
+   "kind": "category",
+   "description": "Category the item is listed in (sc_category sys_id)."
+  },
+  "review_group": {
+   "kind": "group",
+   "description": "Group that reviews P1 incidents."
+  },
+  "p1_group": {
+   "kind": "group",
+   "description": "Group that handles P1 incidents."
+  },
+  "stale_notification": {
+   "kind": "notification",
+   "description": "Notification on incident: still open."
+  },
+  "on_call_phone": {
+   "kind": "text",
+   "description": "On-call phone number, E.164.",
+   "value": "+15550100"
+  }
+ },
+ "steps": [
+  {
+   "id": "ask_review",
+   "label": "Review the incident",
+   "ask": {
+    "short_description": "Review the incident and record the outcome",
+    "assignment_group": {
+     "placeholder": "review_group"
+    },
+    "variables": [
+     {
+      "name": "resolution_notes",
+      "label": "Resolution notes",
+      "type": "multi_line_text",
+      "mandatory": true
+     },
+     {
+      "name": "outcome",
+      "label": "Outcome",
+      "type": "multiple_choice",
+      "choices": {
+       "fixed": "Fixed",
+       "workaround": "Workaround"
+      },
+      "mandatory": true
+     },
+     {
+      "name": "follow_up",
+      "label": "Follow-up needed",
+      "type": "checkbox"
+     }
+    ]
+   }
+  },
+  {
+   "id": "review_done",
+   "label": "Review task closed complete?",
+   "logic": "if",
+   "condition": [
+    {
+     "pill": "ask_review.catalog_task.state"
+    },
+    "=3"
+   ],
+   "steps": [
+    {
+     "id": "log_outcome",
+     "label": "Log the outcome",
+     "action": "log",
+     "inputs": {
+      "log_level": "info",
+      "log_message": [
+       "Outcome ",
+       {
+        "pill": "ask_review.outcome"
+       },
+       " for ",
+       {
+        "pill": "form.incident.number"
+       }
+      ]
+     }
+    }
+   ],
+   "else": {
+    "id": "review_incomplete",
+    "label": "Closed incomplete or skipped",
+    "steps": [
+     {
+      "id": "log_incomplete",
+      "label": "Log it",
+      "action": "log",
+      "inputs": {
+       "log_level": "warn",
+       "log_message": "Review task closed without an outcome"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "fulfil",
+   "label": "Fulfil in parallel",
+   "logic": "parallel",
+   "branches": [
+    [
+     {
+      "id": "task_p1",
+      "label": "P1 group task",
+      "action": "createCatalogTask",
+      "inputs": {
+       "ah_requested_item": {
+        "pill": "trigger.request_item"
+       },
+       "ah_short_description": {
+        "pill": "form.summary"
+       },
+       "ah_fields": {
+        "assignment_group": {
+         "placeholder": "p1_group"
+        }
+       },
+       "ah_wait": false
+      }
+     }
+    ],
+    [
+     {
+      "id": "note_incident",
+      "label": "Work note on the incident",
+      "action": "updateRecord",
+      "inputs": {
+       "table_name": "incident",
+       "record": {
+        "pill": "form.incident"
+       },
+       "values": {
+        "work_notes": "Review requested from the catalog"
+       }
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "id": "wait_review",
+   "label": "One hour before the review deadline",
+   "logic": "wait_duration",
+   "duration": {
+    "hours": 1
+   },
+   "direction": "before",
+   "relative_to": {
+    "pill": "form.review_by"
+   }
+  },
+  {
+   "id": "stale",
+   "label": "Open P1 incidents",
+   "action": "lookUpRecords",
+   "inputs": {
+    "table": "incident",
+    "conditions": "active=true^priority=1",
+    "max_results": 50
+   }
+  },
+  {
+   "id": "each_stale",
+   "label": "For each open P1",
+   "logic": "for_each",
+   "items": {
+    "pill": "stale.Records"
+   },
+   "item": "inc",
+   "steps": [
+    {
+     "id": "by_state",
+     "label": "Which state?",
+     "logic": "if",
+     "condition": [
+      {
+       "pill": "inc.state"
+      },
+      "=1"
+     ],
+     "steps": [
+      {
+       "id": "notify_new",
+       "label": "Still new",
+       "action": "sendNotification",
+       "inputs": {
+        "notification": {
+         "placeholder": "stale_notification"
+        },
+        "record": {
+         "pill": "inc.sys_id"
+        },
+        "table_name": "incident"
+       }
+      }
+     ],
+     "else_if": [
+      {
+       "id": "in_progress",
+       "label": "In progress",
+       "condition": [
+        {
+         "pill": "inc.state"
+        },
+        "=2"
+       ],
+       "steps": [
+        {
+         "id": "note_progress",
+         "label": "Work note",
+         "action": "updateRecord",
+         "inputs": {
+          "table_name": "incident",
+          "record": {
+           "pill": "inc.sys_id"
+          },
+          "values": {
+           "work_notes": "Still in progress at the daily check",
+           "assignment_group": {
+            "placeholder": "p1_group"
+           }
+          }
+         }
+        }
+       ]
+      }
+     ],
+     "else": {
+      "id": "other_state",
+      "label": "Any other state",
+      "steps": [
+       {
+        "id": "log_other",
+        "label": "Log it",
+        "action": "log",
+        "inputs": {
+         "log_level": "warn",
+         "log_message": [
+          "Unexpected state on ",
+          {
+           "pill": "inc.number"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "safe_create",
+   "label": "Create the daily check record",
+   "logic": "try_catch",
+   "try": [
+    {
+     "id": "create_check",
+     "label": "Create",
+     "action": "createRecord",
+     "inputs": {
+      "table_name": "incident",
+      "values": {
+       "short_description": "Daily P1 check",
+       "urgency": 3
+      }
+     }
+    }
+   ],
+   "catch": [
+    {
+     "id": "log_fail",
+     "label": "Log the failure",
+     "action": "log",
+     "inputs": {
+      "log_level": "error",
+      "log_message": "Daily check record could not be created"
+     }
+    },
+    {
+     "id": "stop",
+     "label": "Stop",
+     "logic": "end"
+    }
+   ]
+  },
+  {
+   "id": "poll",
+   "label": "Until no P1 is new",
+   "logic": "do_until",
+   "steps": [
+    {
+     "id": "first_new",
+     "label": "First new P1",
+     "action": "lookUpRecord",
+     "inputs": {
+      "table": "incident",
+      "conditions": "active=true^priority=1^state=1",
+      "sort_type": "sort_asc",
+      "if_multiple_records_are_found_action": "use_first_record"
+     }
+    },
+    {
+     "id": "pause",
+     "label": "Wait an hour",
+     "logic": "wait_duration",
+     "duration": {
+      "hours": 1
+     }
+    }
+   ],
+   "until": [
+    {
+     "pill": "first_new.status"
+    },
+    "=1"
+   ]
+  },
+  {
+   "id": "sms_on_call",
+   "label": "Text the on-call engineer",
+   "action": "sendSms",
+   "inputs": {
+    "recipients": {
+     "placeholder": "on_call_phone"
+    },
+    "message": "Daily P1 check finished."
+   }
+  },
+  {
+   "id": "latest_p1",
+   "label": "Latest P1",
+   "action": "lookUpRecord",
+   "inputs": {
+    "table": "incident",
+    "conditions": "priority=1",
+    "sort_column": "sys_created_on",
+    "sort_type": "sort_desc"
+   }
+  },
+  {
+   "id": "wait_resolved",
+   "label": "Wait for the check record to close",
+   "action": "waitForCondition",
+   "inputs": {
+    "record": {
+     "pill": "latest_p1.Record"
+    },
+    "conditions": "state=7",
+    "table_name": "incident",
+    "timeout_flag": true,
+    "timeout_duration": {
+     "duration": {
+      "days": 1
+     }
+    }
+   }
+  }
+ ]
+}
