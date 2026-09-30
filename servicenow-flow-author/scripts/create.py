@@ -901,3 +901,260 @@ def check_spec(spec, vocab: dict) -> tuple[list[str], dict | None]:
           'referenced': ctx.referenced, 'placeholders': ctx.placeholders, 'notes': ctx.notes,
           'form': form, 'variables': list(ctx.variables.values())}
     return ctx.errors, ir
+
+
+# ------------------------------------------------------------------ rendering (Fluent)
+IND = '    '
+
+
+def ts_str(s: str) -> str:
+    """A TypeScript single-quoted string literal."""
+    return "'" + s.replace('\\', '\\\\').replace("'", "\\'").replace('\r', '\\r').replace('\n', '\\n') + "'"
+
+
+def tpl_text(s: str) -> str:
+    return s.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
+
+
+def pill_ts(node) -> str:
+    return f'wfa.dataPill({node[1]}, {ts_str(node[2])})'
+
+
+def ph_text(node) -> str:
+    return node[2] if node[2] is not None else f'PLACEHOLDER:{node[1]}'
+
+
+def value_ts(node, depth: int) -> str:
+    kind = node[0]
+    if kind == 'str':
+        return ts_str(node[1])
+    if kind == 'num':
+        return repr(node[1])
+    if kind == 'bool':
+        return 'true' if node[1] else 'false'
+    if kind == 'pill':
+        return pill_ts(node)
+    if kind == 'ph':
+        return ts_str(ph_text(node))
+    if kind == 'tpl':
+        out = []
+        for p in node[1]:
+            if p[0] == 'text':
+                out.append(tpl_text(p[1]))
+            elif p[0] == 'pill':
+                out.append('${' + pill_ts(p) + '}')
+            else:
+                out.append(tpl_text(ph_text(p)))
+        return '`' + ''.join(out) + '`'
+    if kind == 'dur':
+        return 'Duration({ ' + ', '.join(f'{k}: {v}' for k, v in node[1]) + ' })'
+    if kind == 'time':
+        return f'Time({{ hours: {node[1]}, minutes: {node[2]}, seconds: {node[3]} }}, {ts_str(node[4])})'
+    if kind == 'tv':
+        pad = IND * (depth + 1)
+        lines = ['TemplateValue({'] + [f'{pad}{col}: {value_ts(v, depth + 1)},' for col, v in node[1]] + [IND * depth + '})']
+        return '\n'.join(lines)
+    if kind == 'approval':
+        users = ', '.join(value_ts(u, 0) for u in node[2])
+        groups = ', '.join(value_ts(g, 0) for g in node[3])
+        p = IND * depth
+        return '\n'.join([
+            'wfa.approvalRules({',
+            f"{p}{IND}conditionType: 'OR',",
+            f'{p}{IND}ruleSets: [',
+            f'{p}{IND * 2}{{',
+            f"{p}{IND * 3}action: 'ApprovesRejects',",
+            f"{p}{IND * 3}conditionType: 'AND',",
+            f"{p}{IND * 3}rules: [[{{ ruleType: {ts_str(node[1])}, users: [{users}], groups: [{groups}], manual: false }}]],",
+            f'{p}{IND * 2}}},',
+            f'{p}{IND}],',
+            f'{p}}})',
+        ])
+    raise ValueError(f'unknown node {kind}')
+
+
+def config_ts(key: str, label: str, extra: list[tuple[str, str]] = ()) -> str:
+    parts = [f"$id: Now.ID[{ts_str(key)}]"] + [f'{k}: {v}' for k, v in extra]
+    if label:
+        parts.append(f'annotation: {ts_str(label)}')
+    return '{ ' + ', '.join(parts) + ' }'
+
+
+def arrow(param: str | None) -> str:
+    return f'({param}) => {{' if param else '() => {'
+
+
+def render_steps(ir: dict, steps: list, depth: int) -> list[str]:
+    out: list[str] = []
+    for st in steps:
+        out += render_step(ir, st, depth)
+    return out
+
+
+def render_step(ir: dict, st: dict, d: int) -> list[str]:
+    p, p1, p2 = IND * d, IND * (d + 1), IND * (d + 2)
+    k = st['kind']
+    if k == 'action':
+        capture = f"const {st['id']} = " if st['id'] in ir['referenced'] else ''
+        lines = [f'{p}{capture}wfa.action(', f"{p1}{st['fluent']},", f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{']
+        lines += [f'{p2}{name}: {value_ts(v, d + 2)},' for name, v in st['inputs']]
+        return lines + [f'{p1}}}', f'{p})']
+    if k == 'if':
+        lines = [f'{p}wfa.flowLogic.if(', f"{p1}{config_ts(st['key'], st['label'], [('condition', value_ts(st['cond'], 0))])},",
+                 f'{p1}() => {{'] + render_steps(ir, st['body'], d + 2) + [f'{p1}}}', f'{p})']
+        for e in st['elifs']:
+            lines += [f'{p}wfa.flowLogic.elseIf(', f"{p1}{config_ts(e['key'], e['label'], [('condition', value_ts(e['cond'], 0))])},",
+                      f'{p1}() => {{'] + render_steps(ir, e['body'], d + 2) + [f'{p1}}}', f'{p})']
+        if st['else']:
+            e = st['else']
+            lines += [f'{p}wfa.flowLogic.else(', f"{p1}{config_ts(e['key'], e['label'])},",
+                      f'{p1}() => {{'] + render_steps(ir, e['body'], d + 2) + [f'{p1}}}', f'{p})']
+        return lines
+    if k == 'for_each':
+        param = st['alias'] if st['alias'] in ir['referenced'] else None
+        return [f'{p}wfa.flowLogic.forEach(', f"{p1}{pill_ts(st['items'])},", f"{p1}{config_ts(st['key'], st['label'])},",
+                f'{p1}{arrow(param)}'] + render_steps(ir, st['body'], d + 2) + [f'{p1}}}', f'{p})']
+    if k == 'parallel':
+        lines = [f'{p}wfa.flowLogic.doInParallel(', f"{p1}{config_ts(st['key'], st['label'])},"]
+        for b in st['branches']:
+            lines += [f'{p1}() => {{'] + render_steps(ir, b, d + 2) + [f'{p1}}},']
+        return lines + [f'{p})']
+    if k == 'try_catch':
+        return ([f'{p}wfa.flowLogic.tryCatch(', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{', f'{p2}try: () => {{']
+                + render_steps(ir, st['try'], d + 3) + [f'{p2}}},', f'{p2}catch: () => {{']
+                + render_steps(ir, st['catch'], d + 3) + [f'{p2}}},', f'{p1}}}', f'{p})'])
+    if k == 'do_until':
+        return ([f'{p}wfa.flowLogic.doTheFollowing(', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}() => {{']
+                + render_steps(ir, st['body'], d + 2) + [f"{p2}wfa.flowLogic.until({value_ts(st['until'], 0)})", f'{p1}}}', f'{p})'])
+    if k == 'wait_duration':
+        lines = [f'{p}wfa.flowLogic.waitForADuration({{', f"{p1}$id: Now.ID[{ts_str(st['key'])}],"]
+        if st['label']:
+            lines.append(f"{p1}annotation: {ts_str(st['label'])},")
+        if st['mode'] == 'relative':
+            lines += [f"{p1}durationType: 'relative_duration',", f"{p1}duration: {value_ts(st['duration'], 0)},",
+                      f"{p1}relativeOperator: {ts_str(st['direction'])},", f"{p1}relativeDatetime: {value_ts(st['relative'], 0)},"]
+        else:
+            lines += [f"{p1}durationType: 'explicit_duration',", f"{p1}duration: {value_ts(st['duration'], 0)},"]
+        if st['schedule'] is not None:
+            lines.append(f"{p1}schedule: {value_ts(st['schedule'], 0)},")
+        return lines + [f'{p}}})']
+    if k == 'end':
+        return [f"{p}wfa.flowLogic.endFlow({config_ts(st['key'], st['label'])})"]
+    if k == 'ask':
+        item = item_name(ir['name'])
+        task = f"{st['id']}__task"
+        lines = [f"{p}{'const ' + task + ' = ' if task in ir['referenced'] else ''}wfa.action(",
+                 f'{p1}action.core.createCatalogTask,', f"{p1}{config_ts(st['key'], st['label'])},", f'{p1}{{',
+                 f'{p2}ah_requested_item: {REQUESTED_ITEM},', f"{p2}ah_short_description: {value_ts(st['short'], 0)},"]
+        if st['fields'][1]:
+            lines.append(f"{p2}ah_fields: {value_ts(st['fields'], d + 2)},")
+        lines += [f'{p2}ah_wait: true,', f'{p2}template_catalog_item: `${{{item}}}`,',
+                  f"{p2}catalog_variables: {variables_ts(item, st['vars'])},", f'{p1}}}', f'{p})']
+        return lines + read_variables(p, st['id'] if st['id'] in ir['referenced'] else None,
+                                      st['key'] + '__answers', st['label'], item, st['vars'])
+    raise ValueError(k)
+
+
+REQUESTED_ITEM = "`${wfa.dataPill(params.trigger.request_item, 'reference')}`"   # sample flow-trigger-catalog-item.now.ts:142
+
+
+def variables_ts(item: str, names: list[str]) -> str:
+    return '[' + ', '.join(f'{item}.variables.{n}' for n in names) + ']'
+
+
+def read_variables(p: str, const: str | None, key: str, label: str, item: str, names: list[str]) -> list[str]:
+    """getCatalogVariables: the answers become pills <const>.<variable> (typings + sample :158; the md says no outputs)."""
+    p1, p2 = p + IND, p + IND * 2
+    return [f"{p}{'const ' + const + ' = ' if const else ''}wfa.action(", f'{p1}action.core.getCatalogVariables,',
+            f'{p1}{config_ts(key, label)},', f'{p1}{{', f'{p2}requested_item: {REQUESTED_ITEM},',
+            f'{p2}template_catalog_item: `${{{item}}}`,', f'{p2}catalog_variables: {variables_ts(item, names)},',
+            f'{p1}}}', f'{p})']
+
+
+def camel(name: str) -> str:
+    head, *rest = name.split('-')
+    return head + ''.join(w[:1].upper() + w[1:] for w in rest)
+
+
+def export_name(name: str) -> str:
+    return camel(name) + 'Flow'
+
+
+def item_name(name: str) -> str:
+    return camel(name) + 'Item'
+
+
+def render_catalog(ir: dict) -> list[str]:
+    """CatalogItem (catalogitem-api.md) + the two CatalogUiPolicy records (cataloguipolicy-api.md) for asked variables."""
+    f, item = ir['form'], item_name(ir['name'])
+    lines = [f'export const {item} = CatalogItem({{', f"{IND}$id: Now.ID[{ts_str(ir['key'] + '__item')}],",
+             f"{IND}name: {ts_str(ir['title'])},", f"{IND}shortDescription: {ts_str(ir['description'])},",
+             f"{IND}description: {ts_str(f['submitted_by'])},", f"{IND}flow: Now.ref('sys_hub_flow', {ts_str(ir['key'])}),",
+             f"{IND}catalogs: [{value_ts(f['catalog'], 0)}],", f"{IND}categories: [{value_ts(f['category'], 0)}],",
+             f'{IND}variables: {{']
+    for v in ir['variables']:
+        props = [f"question: {ts_str(v['label'])}"]
+        if v['extra'] and v['extra'][1][0] == 'choices':
+            props.append('choices: { ' + ', '.join(f'{k}: {{ label: {ts_str(t)}, sequence: {i + 1} }}'
+                                                   for i, (k, t) in enumerate(v['extra'][1][1])) + ' }')
+        elif v['extra']:
+            props.append(f"{v['extra'][0]}: {value_ts(v['extra'][1], 0)}")
+        if v['mandatory'] and v['owner'] == 'form':     # asked variables are required on the task by the UI policy
+            props.append('mandatory: true')
+        props.append(f"order: {v['order']}")
+        if v['help']:
+            props.append(f"helpText: {ts_str(v['help'])}")
+        lines.append(f"{IND * 2}{v['name']}: {v['builder']}({{ {', '.join(props)} }}),")
+    lines += [f'{IND}}},', '})', '']
+    asked = [v for v in ir['variables'] if v['owner'] != 'form']
+    if asked:
+        for suffix, short, on_item, on_task, action in (
+                ('__hide_asked', 'Answered later on a catalog task: hidden on the order form', 'true', 'false',
+                 lambda v: 'visible: false'),
+                ('__show_asked', 'Shown on the catalog tasks that ask them', 'false', 'true',
+                 lambda v: 'visible: true' + (', mandatory: true' if v['mandatory'] else ''))):
+            lines += ['CatalogUiPolicy({', f"{IND}$id: Now.ID[{ts_str(ir['key'] + suffix)}],", f'{IND}shortDescription: {ts_str(short)},',
+                      f'{IND}catalogItem: {item},', f'{IND}appliesOnCatalogItemView: {on_item},',
+                      f'{IND}appliesOnRequestedItems: false,', f'{IND}appliesOnCatalogTasks: {on_task},', f'{IND}onLoad: true,',
+                      f'{IND}actions: [']
+            lines += [f"{IND * 2}{{ variableName: {item}.variables.{v['name']}, {action(v)} }}," for v in asked]
+            lines += [f'{IND}],', '})', '']
+    return lines
+
+
+def render_flow(ir: dict) -> str:
+    imports = (['action'] if ir['uses_action'] else []) + ['Flow', 'wfa', 'trigger']
+    t = ir['trigger']
+    tin = '{ ' + ', '.join(f'{k}: {value_ts(v, 0)}' for k, v in t['inputs']) + ' }' if t['inputs'] else '{}'
+    lines = [
+        f'// Generated by servicenow-flow-author from flow-specs/{ir["name"]}.json — edit the spec and re-run, not this file.',
+        f"import {{ {', '.join(imports)} }} from '@servicenow/sdk/automation'",
+    ]
+    if ir['form']:
+        core = ['CatalogItem'] + (['CatalogUiPolicy'] if any(v['owner'] != 'form' for v in ir['variables']) else [])
+        core += sorted({v['builder'] for v in ir['variables']})
+        lines += [f"import {{ {', '.join(core)} }} from '@servicenow/sdk/core'", ''] + render_catalog(ir)
+    else:
+        lines.append('')
+    lines += [
+        f'export const {export_name(ir["name"])} = Flow(',
+        f'{IND}{{',
+        f"{IND * 2}$id: Now.ID[{ts_str(ir['key'])}],",
+        f"{IND * 2}name: {ts_str(ir['title'])},",
+        f"{IND * 2}description: {ts_str(ir['description'])},",
+        f"{IND * 2}runAs: 'system',",
+        f'{IND}}},',
+        f'{IND}wfa.trigger(',
+        f"{IND * 2}{t['fluent']},",
+        f"{IND * 2}{{ $id: Now.ID[{ts_str(ir['key'] + '__trigger')}] }},",
+        f'{IND * 2}{tin}',
+        f'{IND}),',
+        f"{IND}{arrow('params' if ir['uses_params'] else None)}",
+    ]
+    if ir['form']:
+        item = item_name(ir['name'])
+        lines += read_variables(IND * 2, 'form' if 'form' in ir['referenced'] else None, ir['key'] + '__form', '', item,
+                                [v['name'] for v in ir['variables'] if v['owner'] == 'form'])
+    lines += render_steps(ir, ir['steps'], 2)
+    lines += [f'{IND}}}', ')', '']
+    return '\n'.join(lines)
