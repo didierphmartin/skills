@@ -5,11 +5,14 @@ they need (usually the folder, the placeholders and the two commands).
 
 ## Where the project is
 
-`~/Documents/synergyAI/outputs/servicenow/x_<code>_synergy/` (the app's `/outputs/servicenow/…`). Build and
-install from that folder, the same one every time. The zip `x_<code>_synergy.zip` next to it only moves the
-project to another machine: it holds the whole project, `src/fluent/generated/keys.ts` included (not
-`node_modules`, `dist`, `target`, `.now`), as of the last SynergyAI run — build and install in the unzipped folder
-there. One app ("SynergyAI flows") holds every flow; `FLOWS.md` in the folder lists them:
+SynergyAI writes it to `~/Documents/synergyAI/outputs/servicenow/x_<code>_synergy/` (the app's
+`/outputs/servicenow/…`). It is built and installed from `~/Documents/synergyAI/ServiceNow/x_<code>_synergy/`
+by `build-install.sh`: `npm install` puts ~380 MB of SDK in `node_modules`, and the app loads the whole outputs
+folder into the browser on every skill run, so the SDK must never land there. The script copies the project
+across (deleting nothing there), builds and installs, then copies `keys.ts` back. The zip
+`x_<code>_synergy.zip` only moves the project to another machine: it holds the whole project,
+`src/fluent/generated/keys.ts` included (not `node_modules`, `dist`, `target`, `.now`), as of the last SynergyAI
+run — unzip it under `outputs/servicenow/` there and run `build-install.sh`. One app ("SynergyAI flows") holds every flow; `FLOWS.md` in the folder lists them:
 per flow its file, trigger, who submits the order form and when, the catalog and category it is listed in, the
 variables, and each placeholder (filled or to fill).
 
@@ -21,12 +24,14 @@ The company code in the folder name is asked once and remembered in `/outputs/se
 - Admin (or developer) rights on the instance. The SDK's Fluent features need a Yokohama-family instance or later,
   with the ServiceNow IDE store app 4.1.1 or later — 4.4.1 or later for flows to be activated on install
   (ServiceNow staff statements; there is no official matrix).
-- In the project folder:
+- `rsync` (built into macOS and most Linux).
+- The first run, in a terminal in the outputs project folder:
 
-      npm install
-      npx now-sdk auth --add https://<instance>.service-now.com --type basic
+      sh build-install.sh https://<instance>.service-now.com
 
-  `auth` stores the credential in the system keychain; `--type oauth` is the alternative.
+  It runs `npm install` in the ServiceNow folder and
+  `npx now-sdk auth --add https://<instance>.service-now.com --type basic`, which asks for your login and stores
+  it in the system keychain (`--type oauth` is the alternative, run by hand in the ServiceNow folder).
 
 ## Fill the placeholders
 
@@ -43,14 +48,14 @@ Each `PLACEHOLDER:<name>` in a flow is something only the instance knows. `FLOWS
 | text (e.g. an event name), choice, email | as the description says (events: System Policy → Events → Registry) |
 
 Easiest: give the values to SynergyAI ("the IT Service Desk group is 8a5…"); it re-runs the flow with them and
-`FLOWS.md` marks them filled. Or replace the text `PLACEHOLDER:<name>` in `src/fluent/flows/<name>.now.ts` yourself.
+`FLOWS.md` marks them filled. Editing `PLACEHOLDER:<name>` by hand in `src/fluent/flows/<name>.now.ts` is undone the
+next time SynergyAI writes that flow, and edits in the ServiceNow folder are overwritten by `build-install.sh`.
 
 ## Build and install (every time)
 
-    npx now-sdk build
-    npx now-sdk install
+    sh build-install.sh
 
-`build` compiles offline and stops on any error — send the log to SynergyAI and it fixes the spec.
+It runs `npx now-sdk build` then `npx now-sdk install` in the ServiceNow folder. `build` compiles offline and stops on any error — send the log to SynergyAI and it fixes the spec.
 `install` sends the whole app; unchanged flows stay as they are, and flows are activated on install
 (SDK 4.5.0 and later).
 
@@ -64,6 +69,9 @@ who submits the form and when — tell those people where the item is.
 
 ## Keep, don't touch
 
-- `src/fluent/generated/keys.ts` is created by the first build and maps every step to its record on the
-  instance. Keep it (commit it if the folder is in git). Without it the next install creates duplicates.
+- `src/fluent/generated/keys.ts` is created by the first build (in the ServiceNow folder) and maps every step to
+  its record on the instance. Keep it (commit it if the folder is in git). Without it the next install creates
+  duplicates. `build-install.sh` never overwrites it from the outputs copy.
+- A flow renamed or dropped from the spec stays in the app: delete its `.now.ts` and `flow-specs/` file in both
+  folders by hand.
 - `flow-specs/` holds the spec of every flow; `FLOWS.md` is regenerated from it on each run.

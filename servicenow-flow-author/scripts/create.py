@@ -33,6 +33,7 @@ RESERVED = {
     'in', 'instanceof', 'interface', 'let', 'new', 'null', 'package', 'private', 'protected', 'public',
     'return', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while',
     'with', 'yield', 'form',
+    'item', 'hide_asked', 'show_asked',   # generated record keys <flow>__item etc. (render_catalog): a step id would clash
 }
 LOGIC_KINDS = ('if', 'for_each', 'parallel', 'try_catch', 'do_until', 'wait_duration', 'end')
 STEP_KEYS = {'id', 'label', 'action', 'inputs', 'ask', 'logic', 'condition', 'steps', 'else_if', 'else', 'items',
@@ -617,8 +618,12 @@ def action_ir(ctx: Ctx, st: dict, sid: str | None, where: str):
     for k in inputs:
         if k not in a['inputs']:
             ctx.err(where, f'{name} has no input "{k}" — its inputs are {", ".join(a["inputs"])} ({a["doc"]})')
+    for k in ('table', 'table_name', 'task_table'):
+        if k in inputs and not isinstance(inputs[k], str):   # checked before any lookup in ctx.tables (unhashable)
+            ctx.err(f'{where}.inputs.{k}', 'a table name is literal text such as "sc_task" — never a pill, placeholder or list')
+            inputs = {n: v for n, v in inputs.items() if n != k}
     for k, v in inputs.items():
-        if k in ('table', 'table_name', 'task_table') and isinstance(v, str) and v not in ctx.tables:
+        if k in ('table', 'table_name', 'task_table') and v not in ctx.tables:
             ctx.notes.append(f'{where}: table "{v}" is not typed by SDK {SDK_VERSION} — its field names are not checked here; '
                              f'the build still checks the flow')
     nodes = []
@@ -1254,8 +1259,9 @@ def render_flow(ir: dict) -> str:
 
 
 # ------------------------------------------------------------------ project
-# One shared app per vendor (spec decision 2) under <out>/x_<vendor>_synergy/. The user builds and installs from that
-# folder every time (decision 7); the zip beside it only moves the project to another machine.
+# One shared app per vendor (spec decision 2) under <out>/x_<vendor>_synergy/. The user builds and installs from
+# ~/Documents/synergyAI/ServiceNow/x_<vendor>_synergy/ with build-install.sh (decision 7): npm install puts ~380 MB in
+# node_modules, and the app loads all of outputs/ into the browser on every skill run. The zip only moves the project.
 ZIP_SKIP = ('node_modules/', 'dist/', 'target/', '.now/', 'src/fluent/generated/')
 ZIP_KEEP = ('src/fluent/generated/keys.ts',)   # the build's record keys: without them the next install duplicates
 NEED_VENDOR_TEXT = ('NEED_VENDOR — the app scope is x_<company code>_synergy and the company code is not known yet.\n'
@@ -1327,21 +1333,24 @@ class Project:
                                                'typescript': '5.8.2'}}, indent=2) + '\n'
 
     def readme(self) -> str:
-        """The project README: how to build and install from this folder, every time (spec decision 7)."""
+        """The project README: build and install with build-install.sh, from the ServiceNow folder (spec decision 7)."""
         return f"""# SynergyAI flows ({self.scope})
 
 ServiceNow flows written by SynergyAI's servicenow-flow-author skill, as one ServiceNow SDK (Fluent) app.
 `FLOWS.md` lists every flow, its trigger and the placeholders to fill.
 
-First time (Node 20.18 or later):
+Build and install with `build-install.sh`, in a terminal (Node 20.18 or later). It copies this folder to
+`~/Documents/synergyAI/ServiceNow/{self.scope}/` and builds and installs there, so the SDK (~380 MB, installed
+once) never lands in SynergyAI's outputs folder, which the app loads on every skill run.
 
-    npm install
-    npx now-sdk auth --add https://<instance>.service-now.com --type basic
+First time (it also runs `npm install` and
+`npx now-sdk auth --add https://<instance>.service-now.com --type basic`, which asks for your login):
+
+    sh build-install.sh https://<instance>.service-now.com
 
 Every time:
 
-    npx now-sdk build
-    npx now-sdk install
+    sh build-install.sh
 
 `now-sdk install` sends the whole app; flows that did not change stay as they are. Open Workflow Studio →
 Flows and look for the app "SynergyAI flows". A flow with an order form starts when someone orders its catalog
@@ -1349,9 +1358,37 @@ item (Service Catalog → the category named in `FLOWS.md`).
 
 Schedule placeholders: {SCHEDULE_NOTE}.
 
-Build and install from this folder every time. Keep `src/fluent/generated/keys.ts` (it maps each step to its
-record on the instance; losing it makes the next install create duplicates). The zip next to this folder only
-moves the whole project (keys.ts included) to another machine; it is refreshed on every SynergyAI run.
+Keep `src/fluent/generated/keys.ts` in the ServiceNow folder (it maps each step to its record on the instance;
+losing it makes the next install create duplicates). The script never deletes anything there and copies keys.ts
+back here after each build, so the zip next to this folder moves the whole project (keys.ts included) to another
+machine; it is refreshed on every SynergyAI run.
+"""
+
+    def build_script(self) -> str:
+        """build-install.sh: copy the project to ~/Documents/synergyAI/ServiceNow/<scope>/, build and install there.
+
+        Why a copy: the skill can only write under /outputs, and npm install there would put ~380 MB of SDK inside the
+        folder the app mounts on every skill run. rsync never deletes (keys.ts and node_modules stay) and skips
+        generated/, so an older keys.ts here can never replace the build folder's; keys.ts is copied back after the
+        build so the zip carries it. The build folder is found relative to this one: <root>/outputs/servicenow/<scope>.
+        """
+        return f"""#!/bin/sh
+# Build and install {self.scope} from ~/Documents/synergyAI/ServiceNow/{self.scope}/ (see README.md).
+# First time: sh build-install.sh https://<instance>.service-now.com    Every time: sh build-install.sh
+set -e
+here=$(cd "$(dirname "$0")" && pwd)
+mkdir -p "$here/../../../ServiceNow/{self.scope}"
+build=$(cd "$here/../../../ServiceNow/{self.scope}" && pwd)
+rsync -a --exclude node_modules --exclude dist --exclude target --exclude .now --exclude src/fluent/generated \\
+  "$here/" "$build/"
+cd "$build"
+[ -d node_modules ] || npm install
+[ -z "$1" ] || npx now-sdk auth --add "$1" --type basic
+npx now-sdk build
+npx now-sdk install
+mkdir -p "$here/src/fluent/generated"
+cp src/fluent/generated/keys.ts "$here/src/fluent/generated/keys.ts"
+echo "Installed from $build"
 """
 
     def flows_md(self) -> str:
@@ -1360,8 +1397,10 @@ moves the whole project (keys.ts included) to another machine; it is refreshed o
         Regenerated from every stored spec on each run, oldest flow first, so adding a flow never loses another.
         """
         lines = [f'# SynergyAI flows ({self.scope})', '',
-                 'Fill every placeholder before `npx now-sdk install`: give SynergyAI the values (it re-runs the flow with '
-                 'them), or replace the `PLACEHOLDER:<name>` text in the flow file.', '']
+                 'Fill every placeholder before `sh build-install.sh`: give SynergyAI the values (it re-runs the flow '
+                 'with them). Editing `PLACEHOLDER:<name>` in a flow file by hand is undone the next time SynergyAI '
+                 'writes that flow, and edits in the ServiceNow build folder are overwritten by the next '
+                 '`build-install.sh`.', '']
         for name, s in sorted(self.specs().items(), key=lambda kv: (kv[1].get('_generated_on', ''), kv[0])):
             t, form = s['trigger'], s.get('form')
             if form:     # decision 6: the procedure's start condition is who submits the order form
@@ -1426,6 +1465,7 @@ moves the whole project (keys.ts included) to another machine; it is refreshed o
             self.put('package.json', self.package_json())
             self.put('.gitignore', 'node_modules/\ndist/\ntarget/\n')
             self.put('README.md', self.readme())
+            self.put('build-install.sh', self.build_script())
         stored = dict(spec, _generated_on=today)
         self.put(f'flow-specs/{ir["name"]}.json', json.dumps(stored, indent=2, ensure_ascii=False) + '\n')
         self.put(f'src/fluent/flows/{ir["name"]}.now.ts', render_flow(ir))

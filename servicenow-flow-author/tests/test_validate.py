@@ -118,6 +118,18 @@ class ValidateTest(unittest.TestCase):
         s = minimal(steps=minimal()['steps'] * 2)
         one(errors_of(s), 'id is used twice')
 
+    def test_step_id_cannot_take_a_generated_record_key(self):   # <flow>__item would be defined twice
+        for sid in ('item', 'hide_asked', 'show_asked'):
+            step = dict(catalog_min()['steps'][0], id=sid)
+            one(errors_of(catalog_min(steps=[step])), f'id "{sid}"', 'reserved word')
+
+    def test_table_given_as_a_pill_or_placeholder_is_invalid_not_a_crash(self):
+        for action, key, extra in (('createRecord', 'table_name', {'values': {'short_description': 'x'}}),
+                                   ('lookUpRecords', 'table', {'conditions': 'active=true'})):
+            for value in ({'placeholder': 'some_table'}, {'pill': 'trigger.current.sys_class_name'}, ['incident']):
+                s = minimal(steps=[{'id': 'x', 'label': 'x', 'action': action, 'inputs': dict(extra, **{key: value})}])
+                one(errors_of(s), f'inputs.{key}', 'a table name is literal text')
+
     def test_vendor_independent_limits(self):
         s = fixture('onboarding-en.json')
         s['steps'][0]['inputs']['approval_reason'] = 'x' * 161

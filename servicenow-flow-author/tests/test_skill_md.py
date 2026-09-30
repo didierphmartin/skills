@@ -33,7 +33,7 @@ class SkillMdTest(unittest.TestCase):
 
     def test_body_states_the_contract(self):
         for needle in ('never write TypeScript', 'NEED_VENDOR', 'At most two revisions', '"script": "scripts/create.py"',
-                       'placeholders', '"form"', 'ask step', 'createCatalogTask', 'npx now-sdk install'):
+                       'placeholders', '"form"', 'ask step', 'createCatalogTask', 'build-install.sh'):
             self.assertIn(needle, self.body)
 
 
@@ -89,7 +89,7 @@ class ReplyTemplateTest(unittest.TestCase):
     LINES = ('✅ <flow title> — added to x_<code>_synergy (<N> flow(s) in the app).',
              '📁 ~/Documents/synergyAI/outputs/servicenow/x_<code>_synergy/',
              '✏️ Fill before installing: <comma-separated placeholder names> (details in FLOWS.md).',
-             '▶️ In that folder: npx now-sdk build, then npx now-sdk install.',
+             '▶️ In a terminal, in that folder: sh build-install.sh (the first time, add the instance URL — see README.md).',
              '⚠️ <one sentence: what was left out or approximated>')
 
     def test_rule_6_is_the_template_in_order(self):

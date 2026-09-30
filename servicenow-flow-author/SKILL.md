@@ -35,7 +35,7 @@ context-references: references/flow-spec.md, references/fluent-vocabulary.md
    ✅ <flow title> — added to x_<code>_synergy (<N> flow(s) in the app).
    📁 ~/Documents/synergyAI/outputs/servicenow/x_<code>_synergy/
    ✏️ Fill before installing: <comma-separated placeholder names> (details in FLOWS.md).
-   ▶️ In that folder: npx now-sdk build, then npx now-sdk install.
+   ▶️ In a terminal, in that folder: sh build-install.sh (the first time, add the instance URL — see README.md).
    ⚠️ <one sentence: what was left out or approximated>
    ```
    Line 3 only when placeholders are left to fill; line 5 only when something was left out or approximated.

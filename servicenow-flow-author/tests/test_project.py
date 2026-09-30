@@ -1,5 +1,5 @@
 """Project writer + CLI: first use vs add flow, FLOWS.md, the zip and the remembered vendor code."""
-import json, tempfile, unittest, zipfile
+import json, os, subprocess, tempfile, unittest, zipfile
 from pathlib import Path
 from helpers import fixture, minimal, run_cli
 
@@ -62,6 +62,51 @@ class ProjectTest(unittest.TestCase):
         self.assertIn(f'{SCOPE}/now.config.json', names)
         self.assertIn(f'{SCOPE}/src/fluent/generated/keys.ts', names)   # moving the project keeps the record keys
         self.assertFalse([n for n in names if '/node_modules/' in n or n.endswith('/generated/other.ts')], names)
+
+    def test_build_install_builds_outside_outputs_and_keeps_keys(self):   # decision 7 (revised)
+        """build-install.sh copies to <root>/ServiceNow/<scope>, deletes nothing there, never overwrites the build
+        folder's keys.ts from outputs, and copies keys.ts back. npm and npx are stand-ins that log their calls."""
+        root = self.out / 'synergyAI'
+        out = root / 'outputs' / 'servicenow'
+        self.assertEqual(run_cli(fixture('onboarding-en.json'), out, '--vendor', '1234567').returncode, 0)
+        src, build = out / SCOPE, root / 'ServiceNow' / SCOPE
+        self.assertIn('sh build-install.sh https://<instance>.service-now.com', (src / 'README.md').read_text())
+        bin_ = self.out / 'bin'
+        bin_.mkdir()
+        log = self.out / 'calls.log'
+        (bin_ / 'npm').write_text(f'#!/bin/sh\necho "npm $*" >> {log}\nmkdir node_modules\n')
+        (bin_ / 'npx').write_text(f'#!/bin/sh\necho "npx $*" >> {log}\n'
+                                  'if [ "$2" = build ]; then mkdir -p src/fluent/generated; '
+                                  'echo "// built" >> src/fluent/generated/keys.ts; fi\n')   # like the SDK: keeps existing keys
+        for f in bin_.iterdir():
+            f.chmod(0o755)
+        env = dict(os.environ, PATH=f'{bin_}:{os.environ["PATH"]}')
+
+        def run(*args):
+            r = subprocess.run(['sh', str(src / 'build-install.sh'), *args], env=env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+        run('https://dev1.service-now.com')
+        self.assertEqual(log.read_text().splitlines(), [
+            'npm install', 'npx now-sdk auth --add https://dev1.service-now.com --type basic',
+            'npx now-sdk build', 'npx now-sdk install'])
+        self.assertTrue((build / 'src/fluent/flows/new-employee-onboarding.now.ts').is_file())
+        self.assertFalse((src / 'node_modules').exists())   # nothing heavy in outputs
+        self.assertEqual((src / 'src/fluent/generated/keys.ts').read_text(),
+                         (build / 'src/fluent/generated/keys.ts').read_text())   # copied back for the zip
+
+        (build / 'src/fluent/generated/keys.ts').write_text('// only in the build folder\n')
+        (build / 'extra.txt').write_text('mine')
+        log.write_text('')
+        run_cli(minimal(), out)
+        run()
+        self.assertEqual(log.read_text().splitlines(), ['npx now-sdk build', 'npx now-sdk install'])   # SDK kept
+        self.assertTrue((build / 'src/fluent/flows/log-new-incident.now.ts').is_file())
+        self.assertTrue((build / 'extra.txt').is_file())   # never deletes
+        keys = '// only in the build folder\n// built\n'   # outputs' older copy did not replace it
+        self.assertEqual((build / 'src/fluent/generated/keys.ts').read_text(), keys)
+        self.assertEqual((src / 'src/fluent/generated/keys.ts').read_text(), keys)
+        self.assertIn(f'{SCOPE}/src/fluent/generated/keys.ts', zipfile.ZipFile(out / f'{SCOPE}.zip').namelist())
 
     def test_second_flow_is_added_not_replacing(self):   # Review Focus 4
         run_cli(fixture('onboarding-en.json'), self.out, '--vendor', '1234567')
