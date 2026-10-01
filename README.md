@@ -35,6 +35,7 @@ Full details — authoring guidance, the runtime constraints per surface, and th
 - **[`report-pdf`](report-pdf/SKILL.md)** — Render synthesized report content (markdown or plain text) into a styled PDF. USE scripts/build.py when a workflow's terminal agent must deliver a PDF
 - **[`schema-generate`](schema-generate/SKILL.md)** · [📖 docs](schema-generate/README.md) — Generate ready-to-paste JSON-LD structured-data markup for a web page. Use for: 'generate schema', 'add JSON-LD to my page', 'schema markup for [Artic
 - **[`skill-creator`](skill-creator/SKILL.md)** — Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or opt
+- **[`terraform-author`](terraform-author/SKILL.md)** — Turn the infrastructure of an application described in plain language (any language) into a Terraform project for AWS or Azure that passes terraform validate and is secure by default; "the same on Azure" regenerates it for the other cloud.
 - **[`workflow-compile`](workflow-compile/SKILL.md)** · [📖 docs](workflow-compile/README.md) — Author a multi-agent workflow in a compact JSON form and compile it into the full Workflow DSL JSON the engine loads. USE scripts/compile.py when the 
 - **[`xlsx`](xlsx/SKILL.md)** — Create or edit Excel (.xlsx, .xlsm) files. Use this skill whenever the user wants to GENERATE a new spreadsheet (report, model, table, etc.) or modify
 
