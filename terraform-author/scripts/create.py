@@ -940,3 +940,100 @@ class AwsProject(Project):
     def injected_env(self) -> dict[str, list[str]]:
         return {a['name']: list(self.edge_env(a)) + list(self.secret_values(a)) for a in self.spec.of_type('container_app')
                 if self.edge_env(a) or self.secret_values(a)}
+
+
+# ------------------------------------------------------------------ CLI
+def project_for(spec: Spec) -> Project:
+    """The mapper for the spec's cloud."""
+    match spec.cloud:
+        case 'aws':
+            return AwsProject(spec)
+    raise ValueError(spec.cloud)
+
+
+def check_env_names(spec: Spec, project: Project) -> None:
+    """An env name the user gave must not collide with one the mapper injects for an access edge."""
+    for app, names in project.injected_env().items():
+        given = set(spec.components[app]['env'])
+        for n in names:
+            if n in given:
+                spec.err(f'components.{app}.env.{n}', 'this name is set by an access edge; remove it from env')
+
+
+def write_project(out: Path, files: dict[str, str], folder: str) -> Path:
+    """Write the generated files; delete generated files a previous run wrote and this one does not."""
+    root = out / folder
+    root.mkdir(parents=True, exist_ok=True)
+    for name in GENERATED:
+        if name not in files and (root / name).is_file():
+            (root / name).unlink()
+    for name, text in files.items():
+        (root / name).write_text(text, encoding='utf-8')
+    return root
+
+
+NEED_TARGET_TEXT = ('NEED_TARGET — the spec is valid, but the cloud and region are not known. Nothing was written.\n'
+                    'NEXT: ask the user once: "AWS or Azure, and which region?" (catalog.md → Regions), then run the '
+                    'same call with "--cloud", "<aws|azure>", "--region", "<region>" added to argv.')
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Check the spec, map it for the target, write the project, print the report. Nothing is written unless the
+    spec is VALID and the target known; every problem is listed at once so the model fixes them in one revision."""
+    ap = argparse.ArgumentParser(description='Check a JSON infrastructure spec and write it as a Terraform project.')
+    ap.add_argument('-i', '--input', required=True, help='the JSON spec (references/infra-spec.md) or a saved spec.json')
+    ap.add_argument('--cloud', choices=('aws', 'azure'), help='target cloud (overrides the spec)')
+    ap.add_argument('--region', help='target region (overrides the spec)')
+    ap.add_argument('--out', default='/outputs/terraform', help='output root (default /outputs/terraform)')
+    ap.add_argument('--catalog', help='catalog.json (auto-detected)')
+    try:
+        a = ap.parse_args(argv)
+    except SystemExit:
+        return 2
+    try:
+        raw = json.loads(Path(a.input).read_text(encoding='utf-8'))
+    except Exception as e:  # noqa: BLE001 — any unreadable input is reported the same way
+        print(f'error: cannot read the spec JSON: {e}', file=sys.stderr)
+        return 2
+    spec = Spec(raw, load_catalog(a.catalog), a.cloud, a.region)
+    project = None
+    if not spec.errors and spec.cloud and spec.region:
+        project = project_for(spec)
+        check_env_names(spec, project)
+    if spec.errors:
+        print(f'INVALID — {len(spec.errors)} problem(s):\n  - ' + '\n  - '.join(spec.errors), file=sys.stderr)
+        print('NEXT: fix every problem in one revision of the spec and run again (at most two revisions).', file=sys.stderr)
+        return 1
+    if spec.need_target:
+        print(NEED_TARGET_TEXT)
+        return 1
+    files = project.files()
+    folder = f'{spec.name}-{spec.cloud}'
+    root = write_project(Path(a.out), files, folder)
+    secrets = [c['name'] for c in spec.of_type('secret')]
+    print(f'VALID — "{spec.title}" ({spec.name}) on {project.cloud_title} {spec.region}')
+    print(f'project: {root}')
+    print('wrote: ' + ', '.join(files))
+    for n in spec.notes:
+        print(f'note: {n}')
+    if spec.placeholders:
+        print('placeholders (variables without a default — fill terraform.tfvars):')
+        for n, d in spec.placeholders.items():
+            print(f'  {n} — {d}')
+    else:
+        print('placeholders: none')
+    if secrets:
+        print('secrets (typed at apply time, never stored): ' + ', '.join(f'TF_VAR_{n}' for n in secrets))
+    for w in project.warnings:
+        print(f'warning: {w}')
+    for x in spec.left_out:
+        print(f'left out: {spec.catalog["out_of_v1"][x]}')
+    print(f'commands: cd {USER_ROOT}/{folder} && terraform init && terraform plan -out tfplan && terraform apply tfplan')
+    print(f'NEXT: your reply is exactly the lines of SKILL.md rule 7, nothing else — "{spec.title}", {project.cloud_title} '
+          f'{spec.region}, folder {USER_ROOT}/{folder}/, placeholders: {", ".join(spec.placeholders) or "none (skip that line)"}, '
+          f'secrets: {", ".join(f"TF_VAR_{n}" for n in secrets) or "none"}.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
