@@ -24,6 +24,11 @@ class LabGateTest(unittest.TestCase):
         self.assertEqual(sorted(l.split()[1] for l in out.splitlines() if l.startswith('PASS')), expected)
         self.assertNotRegex(out, r'PASS \S+ aws \(validate, fmt, tflint: 0 errors, [1-9]')   # aws: no warnings either
 
+    def test_azure_projects_pass_the_lab_gate(self):
+        out = self.gate('azure')
+        expected = [s for s in SPECS if not s.startswith('aws-')]
+        self.assertEqual(sorted(l.split()[1] for l in out.splitlines() if l.startswith('PASS')), expected)
+
 
 if __name__ == '__main__':
     unittest.main()

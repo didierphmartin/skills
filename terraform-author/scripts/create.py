@@ -942,12 +942,382 @@ class AwsProject(Project):
                 if self.edge_env(a) or self.secret_values(a)}
 
 
+def storage_account_prefix(project: str, comp: str) -> str:
+    """st + 8 letters/digits of the project + 8 of the component: with the 6-character random suffix it fits the
+    24-character limit of a storage account name (lowercase letters and digits only, globally unique)."""
+    return 'st' + re.sub('[^a-z0-9]', '', project)[:8] + re.sub('[^a-z0-9]', '', comp)[:8]
+
+
+class AzureProject(Project):
+    """Azure (hashicorp/azurerm ~> 5.0), in the forms of the lab's validated scratch/azure-full/main.tf.
+
+    One resource group; a VNet with only the subnets the components need (apps delegated to Microsoft.App,
+    databases delegated to PostgreSQL, private endpoints), each with default outbound access off and its NSG; the
+    NAT gateway on the apps subnet. Globally unique names get a random suffix. azurerm 5 registers no resource
+    provider by itself, so the provider block lists the ones the emitted resources need."""
+
+    cloud = 'azure'
+    cloud_title = 'Azure'
+    providers = ('azurerm', 'random')
+
+    def __init__(self, spec: Spec):
+        super().__init__(spec)
+        self.zones = self.catalog['clouds']['azure']['regions'][spec.region]
+        self.apps_list = spec.of_type('container_app')
+        self.dbs = spec.of_type('postgres')
+        self.stores = spec.of_type('object_storage')
+        self.has_vault = bool(spec.of_type('secret') or self.dbs)
+        self.any_public = any(a['public_https'] for a in self.apps_list)
+
+    def common(self) -> list[Hcl]:
+        """Deployer identity, the random suffix for global names, tags (Azure has no provider default tags), the
+        resource group."""
+        return [Hcl('data', 'azurerm_client_config', 'current'),
+                Hcl('resource', 'random_string', 'suffix', comment='Storage accounts, key vaults and database servers need globally unique names.')
+                .set('length', 6).set('upper', False).set('special', False),
+                Hcl('locals').set('tags', {**self.spec.tags, 'managed_by': 'terraform'}),
+                Hcl('resource', 'azurerm_resource_group', 'main').set('name', f'rg-{self.base}')
+                .set('location', self.spec.region).set('tags', ref('local.tags'))]
+
+    def provider_blocks(self) -> list[Hcl]:
+        rps = set(self.catalog['azure_resource_providers']['network'])
+        for c in self.spec.components.values():
+            rps.update(self.catalog['azure_resource_providers'][c['type']])
+        p = Hcl('provider', 'azurerm', comment='azurerm 5 registers no resource provider by itself: only the ones this project uses.')
+        p.set('resource_providers_to_register', sorted(rps)).set('storage_use_azuread', True)
+        p.block('features')
+        return [p]
+
+    def resource_files(self) -> dict[str, list[Hcl]]:
+        return {'network.tf': self.common() + self.network(), 'storage.tf': self.storage(),
+                'database.tf': self.database(), 'secrets.tf': self.secrets(), 'app.tf': self.apps(),
+                'access.tf': self.access(), 'outputs.tf': self.outputs()}
+
+    def rg(self, block: Hcl, location: bool = True) -> Hcl:
+        """Add location and resource group (every Azure resource needs them; some take no location)."""
+        if location:
+            block.set('location', ref('azurerm_resource_group.main.location'))
+        return block.set('resource_group_name', ref('azurerm_resource_group.main.name'))
+
+    def subnet(self, label: str, cidr: str, delegation: tuple[str, str] | None) -> list[Hcl]:
+        """A subnet with default outbound access off (azurerm still defaults it on), its delegation and its NSG."""
+        s = self.rg(Hcl('resource', 'azurerm_subnet', label).set('name', f'snet-{label}'), location=False) \
+            .set('virtual_network_name', ref('azurerm_virtual_network.main.name')).set('address_prefixes', [cidr]) \
+            .set('default_outbound_access_enabled', False)
+        if delegation:
+            d = s.block('delegation').set('name', delegation[0])
+            d.block('service_delegation').set('name', delegation[1]) \
+                .set('actions', ['Microsoft.Network/virtualNetworks/subnets/join/action'])
+        nsg = self.rg(Hcl('resource', 'azurerm_network_security_group', label).set('name', f'nsg-{self.base}-{label}'))
+        for rule in self.nsg_rules(label):
+            r = nsg.block('security_rule')
+            for k, v in rule.items():
+                r.set(k, v)
+        nsg.set('tags', ref('local.tags'))
+        assoc = Hcl('resource', 'azurerm_subnet_network_security_group_association', label) \
+            .set('subnet_id', ref(f'azurerm_subnet.{label}.id')) \
+            .set('network_security_group_id', ref(f'azurerm_network_security_group.{label}.id'))
+        return [s, nsg, assoc]
+
+    def nsg_rules(self, label: str) -> list[dict]:
+        """Inbound rules per subnet. Apps: HTTPS from the internet when an app is public. Databases: 5432 from the
+        apps subnet when an app has access, from the database subnet itself (HA replication), nothing else."""
+        rule = {'source_port_range': '*', 'destination_address_prefix': '*', 'protocol': 'Tcp', 'direction': 'Inbound'}
+        match label:
+            case 'apps' if self.any_public:
+                return [{'name': 'allow-https-from-internet', 'priority': 100, **rule, 'access': 'Allow',
+                         'destination_port_range': '443', 'source_address_prefix': 'Internet'}]
+            case 'db':
+                rules = []
+                if any(e['type'] == 'postgres' for e in self.spec.access):
+                    rules.append({'name': 'allow-pg-from-apps', 'priority': 100, **rule, 'access': 'Allow',
+                                  'destination_port_range': '5432', 'source_address_prefix': self.subnets[0]})
+                rules.append({'name': 'allow-pg-within-db-subnet', 'priority': 110, **rule, 'access': 'Allow',
+                              'destination_port_range': '5432', 'source_address_prefix': self.subnets[1]})
+                rules.append({'name': 'deny-pg-from-vnet', 'priority': 4000, **rule, 'access': 'Deny',
+                              'destination_port_range': '5432', 'source_address_prefix': 'VirtualNetwork'})
+                return rules
+        return []
+
+    def network(self) -> list[Hcl]:
+        """The VNet and only the subnets the components need; the NAT gateway gives the apps outbound access."""
+        out = [self.rg(Hcl('resource', 'azurerm_virtual_network', 'main').set('name', f'vnet-{self.base}'))
+               .set('address_space', [self.spec.cidr]).set('tags', ref('local.tags'))]
+        if self.apps_list:
+            out += self.subnet('apps', self.subnets[0], ('aca', 'Microsoft.App/environments'))
+            out.append(self.rg(Hcl('resource', 'azurerm_public_ip', 'nat', comment='Outbound internet for the apps (image pulls) goes through one NAT gateway.')
+                               .set('name', f'pip-{self.base}-nat')).set('allocation_method', 'Static').set('sku', 'Standard')
+                       .set('tags', ref('local.tags')))
+            out.append(self.rg(Hcl('resource', 'azurerm_nat_gateway', 'main').set('name', f'ng-{self.base}'))
+                       .set('sku_name', 'Standard').set('tags', ref('local.tags')))
+            out.append(Hcl('resource', 'azurerm_nat_gateway_public_ip_association', 'main')
+                       .set('nat_gateway_id', ref('azurerm_nat_gateway.main.id')).set('public_ip_address_id', ref('azurerm_public_ip.nat.id')))
+            out.append(Hcl('resource', 'azurerm_subnet_nat_gateway_association', 'apps')
+                       .set('subnet_id', ref('azurerm_subnet.apps.id')).set('nat_gateway_id', ref('azurerm_nat_gateway.main.id')))
+        if self.dbs:
+            out += self.subnet('db', self.subnets[1], ('pgflex', 'Microsoft.DBforPostgreSQL/flexibleServers'))
+        if self.stores:
+            out += self.subnet('endpoints', self.subnets[2], None)
+        return out
+
+    def storage(self) -> list[Hcl]:
+        """Per storage: a keyless, TLS 1.2, network-closed account with one private container and a private
+        endpoint (blob DNS zone shared)."""
+        if not self.stores:
+            return []
+        out = [self.rg(Hcl('resource', 'azurerm_private_dns_zone', 'blob').set('name', 'privatelink.blob.core.windows.net'), location=False)
+               .set('tags', ref('local.tags')),
+               Hcl('resource', 'azurerm_private_dns_zone_virtual_network_link', 'blob').set('name', 'blob-link')
+               .set('private_dns_zone_id', ref('azurerm_private_dns_zone.blob.id'))
+               .set('virtual_network_id', ref('azurerm_virtual_network.main.id'))]
+        for s in self.stores:
+            n = s['name']
+            short = storage_account_prefix(self.spec.name, n)
+            acct = self.rg(Hcl('resource', 'azurerm_storage_account', n).set('name', interp(f'{short}${{random_string.suffix.result}}'))) \
+                .set('account_tier', 'Standard').set('account_replication_type', 'ZRS' if self.zones else 'LRS') \
+                .set('min_tls_version', 'TLS1_2').set('https_traffic_only_enabled', True) \
+                .set('allow_nested_items_to_be_public', False).set('shared_access_key_enabled', False) \
+                .set('default_to_oauth_authentication', True).set('public_network_access', 'Disabled')
+            bp = acct.block('blob_properties')
+            if s['versioning']:
+                bp.set('versioning_enabled', True)
+            bp.block('delete_retention_policy').set('days', 7)
+            acct.set('tags', ref('local.tags'))
+            acct.block('lifecycle').set('prevent_destroy', True)
+            out.append(acct)
+            out.append(Hcl('resource', 'azurerm_storage_container', n, comment='Created through the management API (storage_account_id), so Terraform works from outside the network.')
+                       .set('name', n.replace('_', '-')).set('storage_account_id', ref(f'azurerm_storage_account.{n}.id'))
+                       .set('container_access_type', 'private'))
+            pe = self.rg(Hcl('resource', 'azurerm_private_endpoint', n).set('name', f'pe-{self.base}-{n.replace("_", "-")}-blob')) \
+                .set('subnet_id', ref('azurerm_subnet.endpoints.id'))
+            pe.block('private_service_connection').set('name', 'blob') \
+                .set('private_connection_resource_id', ref(f'azurerm_storage_account.{n}.id')) \
+                .set('subresource_names', ['blob']).set('is_manual_connection', False)
+            pe.block('private_dns_zone_group').set('name', 'blob').set('private_dns_zone_ids', [ref('azurerm_private_dns_zone.blob.id')])
+            pe.set('tags', ref('local.tags'))
+            out.append(pe)
+        return out
+
+    def database(self) -> list[Hcl]:
+        """Per database: private DNS zone + link, an ephemeral admin password written only to the server and the key
+        vault (write-only arguments), the flexible server in the delegated subnet, its database."""
+        out = []
+        for d in self.dbs:
+            n, h = d['name'], d['name'].replace('_', '-')
+            out.append(self.rg(Hcl('resource', 'azurerm_private_dns_zone', n).set('name', f'{self.spec.name}-{h}.private.postgres.database.azure.com'), location=False)
+                       .set('tags', ref('local.tags')))
+            out.append(Hcl('resource', 'azurerm_private_dns_zone_virtual_network_link', n).set('name', f'{h}-link')
+                       .set('private_dns_zone_id', ref(f'azurerm_private_dns_zone.{n}.id'))
+                       .set('virtual_network_id', ref('azurerm_virtual_network.main.id'))
+                       .set('depends_on', [ref('azurerm_subnet.db')]))
+            out.append(Hcl('ephemeral', 'random_password', n, comment=f'Admin password of {n}: generated at apply time, written only to the server and the key vault, never to state.')
+                       .set('length', 32).set('special', True).set('override_special', '-_.~'))
+            srv = self.rg(Hcl('resource', 'azurerm_postgresql_flexible_server', n)
+                          .set('name', interp(f'psql-{self.base}-{h}-${{random_string.suffix.result}}'))) \
+                .set('version', d['version']).set('sku_name', self.catalog['sizes'][d['size']]['azure']) \
+                .set('storage_mb', d['storage_gb'] * 1024).set('auto_grow_enabled', True) \
+                .set('backup_retention_days', d['backup_days']) \
+                .set('delegated_subnet_id', ref('azurerm_subnet.db.id')) \
+                .set('private_dns_zone_id', ref(f'azurerm_private_dns_zone.{n}.id')) \
+                .set('public_network_access_enabled', False).set('administrator_login', 'appadmin') \
+                .set('administrator_password_wo', ref(f'ephemeral.random_password.{n}.result')) \
+                .set('administrator_password_wo_version', 1)
+            if self.zones:
+                srv.set('zone', '1')
+            srv.block('authentication').set('active_directory_auth_enabled', False).set('password_auth_enabled', True)
+            if d['high_availability']:
+                srv.block('high_availability').set('mode', 'ZoneRedundant' if self.zones else 'SameZone')
+            srv.set('tags', ref('local.tags')).set('depends_on', [ref(f'azurerm_private_dns_zone_virtual_network_link.{n}')])
+            srv.block('lifecycle').set('prevent_destroy', True)
+            out.append(srv)
+            out.append(Hcl('resource', 'azurerm_postgresql_flexible_server_database', n).set('name', n)
+                       .set('server_id', ref(f'azurerm_postgresql_flexible_server.{n}.id')))
+            out.append(Hcl('resource', 'azurerm_key_vault_secret', f'{n}_password', comment='The same password, for the apps given access to the database.')
+                       .set('name', f'{h}-admin-password').set('key_vault_id', ref('azurerm_key_vault.main.id'))
+                       .set('value_wo', ref(f'ephemeral.random_password.{n}.result')).set('value_wo_version', 1)
+                       .set('depends_on', [ref('azurerm_role_assignment.deployer_secrets')]))
+        if self.dbs and any(d['high_availability'] and not self.zones for d in self.dbs):
+            self.warnings.append(f'{self.spec.region} has no availability zones: the database standby is in the same zone.')
+        return out
+
+    def secrets(self) -> list[Hcl]:
+        """One key vault for all secrets and database passwords; the deployer gets Secrets Officer to write them."""
+        if not self.has_vault:
+            return []
+        short = re.sub('-+', '-', f'kv-{self.spec.name}')[:17].rstrip('-')
+        kv = self.rg(Hcl('resource', 'azurerm_key_vault', 'main', comment='Public network access with role-based access only: Terraform writes the values through the vault API.')
+                     .set('name', interp(f'{short}-${{random_string.suffix.result}}'))) \
+            .set('tenant_id', ref('data.azurerm_client_config.current.tenant_id')).set('sku_name', 'standard') \
+            .set('rbac_authorization_enabled', True).set('purge_protection_enabled', True) \
+            .set('soft_delete_retention_days', 7).set('tags', ref('local.tags'))
+        out = [kv, Hcl('resource', 'azurerm_role_assignment', 'deployer_secrets', comment='The identity running Terraform writes the secret values.')
+               .set('scope', ref('azurerm_key_vault.main.id'))
+               .set('role_definition_name', self.catalog['roles']['azure']['deployer.secrets'])
+               .set('principal_id', ref('data.azurerm_client_config.current.object_id'))]
+        for s in self.spec.of_type('secret'):
+            n = s['name']
+            out.append(Hcl('resource', 'azurerm_key_vault_secret', n).set('name', n.replace('_', '-'))
+                       .set('key_vault_id', ref('azurerm_key_vault.main.id')).set('value_wo', ref(f'var.{n}'))
+                       .set('value_wo_version', 1).set('depends_on', [ref('azurerm_role_assignment.deployer_secrets')]))
+        self.warnings.append('The key vault keeps public network access (role-based access only): Terraform writes '
+                             'secret values through its API.')
+        return out
+
+    def vault_secrets_of(self, app: str) -> list[tuple[str, str, str]]:
+        """(env name, container-app secret name, Terraform label of the key vault secret) the app reads."""
+        out = []
+        for e in self.spec.edges_from(app):
+            match e['type']:
+                case 'secret':
+                    out.append((e['to'].upper(), e['to'].replace('_', '-'), e['to']))
+                case 'postgres':
+                    out.append((f'{e["to"].upper()}_PASSWORD', f'{e["to"].replace("_", "-")}-password', f'{e["to"]}_password'))
+        return out
+
+    def apps(self) -> list[Hcl]:
+        """Log Analytics, one Container Apps environment in the apps subnet (internal when no app is public), and
+        per app its identity and container app with HTTPS ingress, env and key vault secrets."""
+        if not self.apps_list:
+            return []
+        out = [self.rg(Hcl('resource', 'azurerm_log_analytics_workspace', 'main').set('name', f'log-{self.base}'))
+               .set('sku', 'PerGB2018').set('retention_in_days', 30).set('tags', ref('local.tags'))]
+        env = self.rg(Hcl('resource', 'azurerm_container_app_environment', 'main').set('name', f'cae-{self.base}')) \
+            .set('infrastructure_subnet_id', ref('azurerm_subnet.apps.id')) \
+            .set('internal_load_balancer_enabled', not self.any_public) \
+            .set('logs_destination', 'log-analytics') \
+            .set('log_analytics_workspace_id', ref('azurerm_log_analytics_workspace.main.id'))
+        env.block('workload_profile').set('name', 'Consumption').set('workload_profile_type', 'Consumption')
+        env.set('tags', ref('local.tags')).set('depends_on', [ref('azurerm_subnet_nat_gateway_association.apps')])
+        out.append(env)
+        for a in self.apps_list:
+            n = a['name']
+            out.append(self.rg(Hcl('resource', 'azurerm_user_assigned_identity', n).set('name', f'id-{self.base}-{n.replace("_", "-")}'))
+                       .set('tags', ref('local.tags')))
+            app = self.rg(Hcl('resource', 'azurerm_container_app', n).set('name', f'ca-{n.replace("_", "-")}'), location=False) \
+                .set('container_app_environment_id', ref('azurerm_container_app_environment.main.id')) \
+                .set('revision_mode', 'Single').set('workload_profile_name', 'Consumption')
+            app.block('identity').set('type', 'UserAssigned').set('identity_ids', [ref(f'azurerm_user_assigned_identity.{n}.id')])
+            for _, sname, label in self.vault_secrets_of(n):
+                app.block('secret').set('name', sname).set('key_vault_secret_id', ref(f'azurerm_key_vault_secret.{label}.versionless_id')) \
+                    .set('identity', ref(f'azurerm_user_assigned_identity.{n}.id'))
+            ing = app.block('ingress').set('external_enabled', a['public_https'] or not self.any_public) \
+                .set('target_port', a['port']).set('allow_insecure_connections', False)
+            ing.block('traffic_weight').set('latest_revision', True).set('percentage', 100)
+            tpl = app.block('template').set('min_replicas', a['min_instances']).set('max_replicas', a['max_instances'])
+            c = tpl.block('container').set('name', n.replace('_', '-')).set('image', self.placeholder_or_text(a['image'])) \
+                .set('cpu', a['cpu']).set('memory', f'{a["memory_gb"]:g}Gi')
+            for k, v in self.env_values(a).items():
+                c.block('env').set('name', k).set('value', v)
+            for k, sname, _ in self.vault_secrets_of(n):
+                c.block('env').set('name', k).set('secret_name', sname)
+            app.set('tags', ref('local.tags'))
+            deps = [ref(f'azurerm_role_assignment.{n}_{e["to"]}') for e in self.spec.edges_from(n) if e['type'] in ('secret', 'postgres')]
+            if deps:
+                app.set('depends_on', deps)
+            out.append(app)
+        if self.any_public and not all(a['public_https'] for a in self.apps_list):
+            self.warnings.append('Apps without public_https are reachable only from the other apps of the environment '
+                                 '(the environment faces the internet because another app is public).')
+        return out
+
+    def env_values(self, a: dict) -> dict:
+        """The app's own env, then what the platform and its access edges inject (names in the README)."""
+        return {**{k: self.placeholder_or_text(v) for k, v in a['env'].items()}, **self.edge_env(a)}
+
+    def edge_env(self, a: dict) -> dict:
+        """Plain environment variables: the app's identity client id, blob endpoint and container, database host,
+        port, name and user."""
+        env = {}
+        env['AZURE_CLIENT_ID'] = ref(f'azurerm_user_assigned_identity.{a["name"]}.client_id')
+        for e in self.spec.edges_from(a['name']):
+            t, T = e['to'], e['to'].upper()
+            match e['type']:
+                case 'object_storage':
+                    env[f'{T}_BLOB_ENDPOINT'] = ref(f'azurerm_storage_account.{t}.primary_blob_endpoint')
+                    env[f'{T}_CONTAINER'] = ref(f'azurerm_storage_container.{t}.name')
+                case 'postgres':
+                    env[f'{T}_HOST'] = ref(f'azurerm_postgresql_flexible_server.{t}.fqdn')
+                    env[f'{T}_PORT'] = '5432'
+                    env[f'{T}_NAME'] = t
+                    env[f'{T}_USER'] = 'appadmin'
+        return env
+
+    def access(self) -> list[Hcl]:
+        """One role assignment per edge, scoped to the storage account or to the one key vault secret."""
+        out = []
+        roles = self.catalog['roles']['azure']
+        for e in self.spec.access:
+            a, t = e['from'], e['to']
+            match e['type']:
+                case 'object_storage':
+                    scope, role = ref(f'azurerm_storage_account.{t}.id'), roles[f'object_storage.{e["level"]}']
+                case 'secret':
+                    scope, role = ref(f'azurerm_key_vault_secret.{t}.resource_versionless_id'), roles['secret.read']
+                case 'postgres':
+                    scope, role = ref(f'azurerm_key_vault_secret.{t}_password.resource_versionless_id'), roles['secret.read']
+            out.append(Hcl('resource', 'azurerm_role_assignment', f'{a}_{t}').set('scope', scope)
+                       .set('role_definition_name', role)
+                       .set('principal_id', ref(f'azurerm_user_assigned_identity.{a}.principal_id'))
+                       .set('principal_type', 'ServicePrincipal'))
+        return out
+
+    def outputs(self) -> list[Hcl]:
+        """Resource group, app addresses, storage accounts, database hosts, key vault URI; no secret values."""
+        out = [Hcl('output', 'resource_group').set('value', ref('azurerm_resource_group.main.name'))]
+        for a in self.apps_list:
+            out.append(Hcl('output', f'{a["name"]}_url').set('value', interp(f'https://${{azurerm_container_app.{a["name"]}.ingress[0].fqdn}}')))
+        for s in self.stores:
+            out.append(Hcl('output', f'{s["name"]}_storage_account').set('value', ref(f'azurerm_storage_account.{s["name"]}.name')))
+        for d in self.dbs:
+            out.append(Hcl('output', f'{d["name"]}_fqdn').set('value', ref(f'azurerm_postgresql_flexible_server.{d["name"]}.fqdn')))
+        if self.has_vault:
+            out.append(Hcl('output', 'key_vault_uri').set('value', ref('azurerm_key_vault.main.vault_uri')))
+        return out
+
+    def destroy_line(self) -> str:
+        return ('`terraform destroy` is refused while the database servers and storage accounts carry '
+                '`lifecycle { prevent_destroy = true }`: remove those blocks first. The key vault has purge '
+                'protection: its name stays reserved for 7 days after deletion.')
+
+    def login_lines(self) -> list[str]:
+        return ['- Terraform 1.11 or later (write-only secret arguments need it).',
+                '- `az login`, then `export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)`.',
+                '- Your account needs Owner (or Contributor + User Access Administrator) on the subscription: the '
+                'project creates role assignments.']
+
+    def summary_lines(self) -> list[str]:
+        s = self.spec
+        lines = [f'- Resource group `rg-{self.base}`; VNet {s.cidr} with one subnet per need, default outbound access '
+                 f'off, an NSG on each{", NAT gateway for the apps" if self.apps_list else ""}.']
+        for a in self.apps_list:
+            reach = 'public HTTPS address' if a['public_https'] else ('HTTPS address inside the network' if not self.any_public
+                                                                      else 'reachable from the other apps only')
+            lines.append(f'- `{a["name"]}`: Container App ({a["cpu"]:g} vCPU, {a["memory_gb"]:g} GB, '
+                         f'{a["min_instances"]}–{a["max_instances"]} replicas, port {a["port"]}), {reach}; its own managed identity.')
+        for d in self.dbs:
+            lines.append(f'- `{d["name"]}`: PostgreSQL flexible server {d["version"]} ({self.catalog["sizes"][d["size"]]["azure"]}, '
+                         f'{d["storage_gb"]} GB, private, backups {d["backup_days"]} days'
+                         f'{", zone-redundant standby" if d["high_availability"] else ""}); admin password generated at '
+                         f'apply time and kept only in the key vault.')
+        for o in self.stores:
+            lines.append(f'- `{o["name"]}`: storage account (no shared keys, TLS 1.2, public network access disabled, private '
+                         f'endpoint){", versioned" if o["versioning"] else ""}, 7-day soft delete.')
+        if self.has_vault:
+            lines.append('- One key vault (role-based access, purge protection) for the secrets and database passwords.')
+        return lines
+
+    def injected_env(self) -> dict[str, list[str]]:
+        return {a['name']: list(self.edge_env(a)) + [k for k, _, _ in self.vault_secrets_of(a['name'])] for a in self.apps_list}
+
+
 # ------------------------------------------------------------------ CLI
 def project_for(spec: Spec) -> Project:
     """The mapper for the spec's cloud."""
     match spec.cloud:
         case 'aws':
             return AwsProject(spec)
+        case 'azure':
+            return AzureProject(spec)
     raise ValueError(spec.cloud)
 
 
