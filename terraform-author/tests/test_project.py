@@ -73,6 +73,33 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn('components.web.env.DB_HOST: this name is set by an access edge; remove it from env', r.stderr)
 
+    def test_two_edges_setting_one_env_name_are_refused(self):   # final fix 6: secret db_host + edge to db
+        raw = fixture('customer-portal.json')
+        raw['components'].append({'type': 'secret', 'name': 'db_host'})
+        raw['access'].append({'from': 'web', 'to': 'db_host'})
+        for cloud in ('aws', 'azure'):
+            r = run_cli(raw, self.out, '--cloud', cloud)
+            self.assertEqual(r.returncode, 1, cloud)
+            self.assertIn('components.web: two of its access edges set DB_HOST; rename the component one of them points to', r.stderr)
+        raw = fixture('customer-portal.json')
+        raw['components'].append({'type': 'secret', 'name': 'azure_client_id'})
+        raw['access'].append({'from': 'web', 'to': 'azure_client_id'})
+        r = run_cli(raw, self.out, '--cloud', 'azure')
+        self.assertIn('two of its access edges set AZURE_CLIENT_ID', r.stderr)
+        self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_env_collisions_are_reported_with_other_errors(self):   # final fix 5: check_env_names with errors
+        raw = fixture('customer-portal.json') | {'title': ''}
+        raw['components'][0]['env']['DB_HOST'] = 'localhost'
+        r = run_cli(raw, self.out)
+        self.assertIn('INVALID — 2 problem(s):', r.stderr)
+        self.assertIn('title: must be a non-empty string', r.stderr)
+        self.assertIn('components.web.env.DB_HOST: this name is set by an access edge', r.stderr)
+        raw['network'] = {'cidr': 'nonsense'}                                 # no range: still no crash
+        r = run_cli(raw, self.out, '--cloud', 'azure')
+        self.assertIn('INVALID — 3 problem(s):', r.stderr)
+        self.assertNotIn('Traceback', r.stderr)
+
     def test_unreadable_spec_or_argv_is_exit_2(self):
         bad = self.out / 'bad.json'
         bad.write_text('{"name": ')

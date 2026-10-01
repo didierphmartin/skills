@@ -31,8 +31,8 @@ IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')   # object keys written bare;
 TOP_KEYS = {'name', 'title', 'environment', 'target', 'tags', 'network', 'components', 'access', 'placeholders',
             'left_out'}
 # Component names that would give a generated resource the label of a shared one (the Azure blob DNS zone, the
-# deployer's key vault role assignment).
-RESERVED = {'blob', 'deployer'}
+# deployer's key vault role assignment, the private DNS zone of an internal Container Apps environment).
+RESERVED = {'blob', 'deployer', 'apps_env'}
 # Names Terraform refuses for a variable (placeholders and secrets become variables).
 TF_RESERVED_VARS = {'source', 'version', 'providers', 'count', 'for_each', 'lifecycle', 'depends_on', 'locals'}
 # Every file a run may write; a rerun deletes the ones this run does not write (nothing else in the folder).
@@ -85,7 +85,7 @@ class Spec:
         self._access(raw.get('access', []))
         self._placeholders(raw.get('placeholders', {}))
         self._target(raw.get('target'), cloud, region)
-        if self.cloud and not self.errors:
+        if self.cloud:   # even with other errors: one revision must see every problem (at most two revisions)
             self._cloud_rules()
 
     # ---- top level
@@ -172,12 +172,8 @@ class Spec:
             match ctype:
                 case 'container_app':
                     self.components[name] = self._container_app(c, where)
-                case 'postgres':
-                    self.components[name] = self._options(c, where, 'postgres')
-                case 'object_storage':
-                    self.components[name] = self._options(c, where, 'object_storage')
-                case 'secret':
-                    self.components[name] = self._options(c, where, 'secret')
+                case 'postgres' | 'object_storage' | 'secret':
+                    self.components[name] = self._options(c, where, ctype)
 
     def _options(self, c: dict, where: str, ctype: str) -> dict:
         """Unknown keys are errors; known ones get their catalog default when absent."""
@@ -283,9 +279,12 @@ class Spec:
             return
         secrets = {n for n, c in self.components.items() if c['type'] == 'secret'}
         for d in self.components.values():
-            if d['type'] == 'postgres' and f'{d["name"]}_password' in secrets:
-                self.err(f'components.{d["name"]}_password', f'this name is taken by the generated password of the '
-                                                             f'database "{d["name"]}"; rename the secret')
+            # <db>_password is the Terraform label of the database's key vault secret (Azure) and <db>_admin_password
+            # would give a secret the key vault name of that password (<db>-admin-password)
+            for taken in (f'{d["name"]}_password', f'{d["name"]}_admin_password'):
+                if d['type'] == 'postgres' and taken in secrets:
+                    self.err(f'components.{taken}', f'this name is taken by the generated password of the '
+                                                    f'database "{d["name"]}"; rename the secret')
         for n in sorted(secrets & TF_RESERVED_VARS):
             self.err(f'components.{n}', 'Terraform reserves this name for itself; rename the secret')
         for n, d in phs.items():
@@ -336,16 +335,19 @@ class Spec:
                 self.notes.append(f'region {self.region} is the {self.cloud} region nearest to {old_region} (catalog region pairs)')
         if self.cloud and self.region is not None and self.region not in clouds[self.cloud]['regions']:
             self.err('target.region', f'"{self.region}" is not a {self.cloud} region; see references/catalog.md → Regions')
+            self.region = None   # an unknown region is not a target: no project is built from it
             return
         if not self.cloud or not self.region:
             self.need_target = True
 
     # ---- per-cloud rules
     def _cloud_rules(self) -> None:
+        """Rules of one cloud. They run even when other checks failed, so they read only values that are already
+        checked or guard them (a wrong size or a non-boolean is reported elsewhere, never a crash here)."""
         apps = [c for c in self.components.values() if c['type'] == 'container_app']
         match self.cloud:
             case 'aws':
-                if len({a['public_https'] for a in apps}) > 1:
+                if len({a['public_https'] for a in apps if isinstance(a['public_https'], bool)}) > 1:
                     self.err('components', 'on AWS all container apps of one project share public_https: the first '
                                            'ECS Express service of a network fixes whether its load balancer faces the '
                                            'internet; split them into two projects or give them the same value')
@@ -357,8 +359,9 @@ class Spec:
                         self.err(f'components.{c["name"]}', f'on Azure its storage account name would match the one of '
                                                             f'"{seen[key]}" (first 8 letters and digits); rename one')
                     seen[key] = c['name']
-                for c in self.components.values():
-                    if c['type'] == 'postgres' and c['high_availability'] and not self.catalog['sizes'][c['size']]['azure_ha']:
+                for c in self.of_type('postgres'):
+                    size = self.catalog['sizes'].get(c['size']) if isinstance(c['size'], str) else None
+                    if c['high_availability'] is True and size and not size['azure_ha']:
                         self.err(f'components.{c["name"]}.high_availability',
                                  f'size "{c["size"]}" is Burstable on Azure, which has no high availability; use size '
                                  f'"medium" or set high_availability to false')
@@ -523,9 +526,13 @@ class Project:
         self.spec, self.catalog = spec, spec.catalog
         self.base = f'{spec.name}-{spec.environment}'
         self.warnings: list[str] = []
-        net = ipaddress.ip_network(spec.cidr)
-        self.subnets = [str(s) for s in list(net.subnets(new_prefix=24))[:4]]
-        self.newbits = 24 - net.prefixlen
+        # README-only trade-offs: true of every project with these components, too long for the report
+        self.tradeoffs: list[str] = []
+        # A spec with errors still gets a project, only to list the env names its edges inject (check_env_names):
+        # without a valid range there are no subnets, and files() is never called.
+        net = ipaddress.ip_network(spec.cidr) if spec.cidr else None
+        self.subnets = [str(s) for s in list(net.subnets(new_prefix=24))[:4]] if net else []
+        self.newbits = 24 - net.prefixlen if net else 0
 
     # ---- shared files
     def files(self) -> dict[str, str]:
@@ -573,6 +580,14 @@ class Project:
         """A spec value as HCL: {"placeholder": n} → var.n, text → a quoted string."""
         return ref(f'var.{v["placeholder"]}') if isinstance(v, dict) else v
 
+    def env_values(self, a: dict) -> dict:
+        """The app's own env, then what the platform and its access edges inject (names in the README)."""
+        return {**{k: self.placeholder_or_text(v) for k, v in a['env'].items()}, **dict(self.edge_env(a))}
+
+    def database_edges(self) -> bool:
+        """Whether an app connects to a database (the admin-user and rotation trade-offs apply only then)."""
+        return any(e['type'] == 'postgres' for e in self.spec.access)
+
     def readme(self) -> str:
         """The project's README: what to fill and type, the commands, what was generated, the env names the apps
         receive, and the trade-offs — so the chat reply can stay a few lines."""
@@ -600,9 +615,11 @@ class Project:
             lines += ['', '## Environment variables the apps receive', '']
             for app, names in env.items():
                 lines.append(f'- `{app}`: ' + ', '.join(f'`{n}`' for n in names))
-        if self.warnings or s.left_out:
+        tradeoffs = self.tradeoffs + (['The apps connect to the database as its admin user in this version (one '
+                                       'user per app: a later version).'] if self.database_edges() else [])
+        if self.warnings or tradeoffs or s.left_out:
             lines += ['', '## Trade-offs and what was left out', '']
-            lines += [f'- {w}' for w in self.warnings]
+            lines += [f'- {w}' for w in self.warnings + tradeoffs]
             lines += [f'- Left out: {self.catalog["out_of_v1"][x]}' for x in s.left_out]
         lines += self.recovery_lines()
         return '\n'.join(lines) + '\n'
@@ -627,7 +644,12 @@ class Project:
         raise NotImplementedError
 
     def login_lines(self) -> list[str]:
-        """README prerequisites: Terraform version and how to sign in to this cloud."""
+        """README prerequisites: Terraform version, how to sign in to this cloud, what only apply checks."""
+        raise NotImplementedError
+
+    def edge_env(self, a: dict) -> list[tuple[str, object]]:
+        """Plain environment variables the app's access edges set, as (name, value) pairs: a list, not a dict, so
+        two edges setting one name stay visible to check_env_names instead of one silently replacing the other."""
         raise NotImplementedError
 
     def summary_lines(self) -> list[str]:
@@ -642,7 +664,7 @@ class Project:
 class AwsProject(Project):
     """AWS (hashicorp/aws ~> 6.0), in the forms of the lab's validated scratch/aws-full/main.tf.
 
-    Network: VPC, 2 public + 2 private subnets over 2 AZs, internet gateway, one NAT gateway; security groups with
+    Network: VPC, 2 public + 2 private subnets over 2 AZs, internet gateway, one NAT gateway when there is an app; security groups with
     separate rule resources (inline rules referencing each other made the baseline's Cycle). Apps: ECS Express
     (HTTPS load balancer and certificate managed by ECS). Public apps run in the public subnets because Express
     makes an internet-facing load balancer only there."""
@@ -652,19 +674,23 @@ class AwsProject(Project):
     providers = ('aws',)
 
     def provider_blocks(self) -> list[Hcl]:
+        """The region, and default tags so every resource carries the spec's tags without repeating them."""
         p = Hcl('provider', 'aws').set('region', self.spec.region)
         p.block('default_tags').set('tags', {**self.spec.tags, 'managed_by': 'terraform'})
         return [p]
 
     def resource_files(self) -> dict[str, list[Hcl]]:
+        """One file per concern, so a user finds the database in database.tf; empty ones are not written."""
         return {'network.tf': self.network(), 'storage.tf': self.storage(), 'database.tf': self.database(),
                 'secrets.tf': self.secrets(), 'app.tf': self.apps(), 'access.tf': self.access(),
                 'outputs.tf': self.outputs()}
 
     def network(self) -> list[Hcl]:
-        """VPC over 2 AZs, public and private subnets, one NAT gateway, one security group per app and database
-        (rules are separate resources: inline rules referencing each other made the baseline's Cycle)."""
+        """VPC over 2 AZs, public and private subnets, one NAT gateway when there is an app (only apps go out to the
+        internet: image pulls; a NAT gateway and its address cost money every hour), one security group per app and
+        database (rules are separate resources: inline rules referencing each other made the baseline's Cycle)."""
         b = self.base
+        apps = self.spec.of_type('container_app')
         out = [Hcl('data', 'aws_availability_zones', 'available').set('state', 'available'),
                Hcl('locals').set('azs', ref('slice(data.aws_availability_zones.available.names, 0, 2)')),
                Hcl('resource', 'aws_vpc', 'main').set('cidr_block', self.spec.cidr).set('enable_dns_support', True)
@@ -677,20 +703,23 @@ class AwsProject(Project):
                .set('cidr_block', ref(f'cidrsubnet(aws_vpc.main.cidr_block, {self.newbits}, count.index + 2)'))
                .set('availability_zone', ref('local.azs[count.index]'))
                .set('tags', {'Name': Raw(f'"{b}-private-${{count.index}}"')}),
-               Hcl('resource', 'aws_internet_gateway', 'main').set('vpc_id', ref('aws_vpc.main.id')),
-               Hcl('resource', 'aws_eip', 'nat').set('domain', 'vpc'),
-               Hcl('resource', 'aws_nat_gateway', 'main').set('allocation_id', ref('aws_eip.nat.id'))
-               .set('subnet_id', ref('aws_subnet.public[0].id')).set('depends_on', [ref('aws_internet_gateway.main')])]
+               Hcl('resource', 'aws_internet_gateway', 'main').set('vpc_id', ref('aws_vpc.main.id'))]
+        if apps:
+            out += [Hcl('resource', 'aws_eip', 'nat').set('domain', 'vpc'),
+                    Hcl('resource', 'aws_nat_gateway', 'main').set('allocation_id', ref('aws_eip.nat.id'))
+                    .set('subnet_id', ref('aws_subnet.public[0].id')).set('depends_on', [ref('aws_internet_gateway.main')])]
         pub = Hcl('resource', 'aws_route_table', 'public').set('vpc_id', ref('aws_vpc.main.id'))
         pub.block('route').set('cidr_block', '0.0.0.0/0').set('gateway_id', ref('aws_internet_gateway.main.id'))
+        # without an app the private subnets keep their route table (local routes only): the database stays inside
         priv = Hcl('resource', 'aws_route_table', 'private').set('vpc_id', ref('aws_vpc.main.id'))
-        priv.block('route').set('cidr_block', '0.0.0.0/0').set('nat_gateway_id', ref('aws_nat_gateway.main.id'))
+        if apps:
+            priv.block('route').set('cidr_block', '0.0.0.0/0').set('nat_gateway_id', ref('aws_nat_gateway.main.id'))
         out += [pub, priv]
         for kind in ('public', 'private'):
             out.append(Hcl('resource', 'aws_route_table_association', kind).set('count', 2)
                        .set('subnet_id', ref(f'aws_subnet.{kind}[count.index].id'))
                        .set('route_table_id', ref(f'aws_route_table.{kind}.id')))
-        for a in self.spec.of_type('container_app'):
+        for a in apps:
             n = a['name']
             out.append(Hcl('resource', 'aws_security_group', n, comment=f'App {n}: outbound only; its load balancer is managed by ECS Express.')
                        .set('name_prefix', prefix(f'{b}-{n}', 100)).set('description', f'App {n}')
@@ -806,66 +835,73 @@ class AwsProject(Project):
             c.block('aws_logs_configuration').set('log_group', ref(f'aws_cloudwatch_log_group.{n}.name'))
             for k, v in self.env_values(a).items():
                 c.block('environment').set('name', k).set('value', v)
-            for k, v in self.secret_values(a).items():
+            for k, v in self.secret_values(a):
                 c.block('secret').set('name', k).set('value_from', v)
             svc.note('Public subnets: internet-facing HTTPS load balancer, tasks get public IPs (inbound only from it).' if public
                      else 'Private subnets: internal HTTPS load balancer, reachable only from inside the network.')
             svc.block('network_configuration').set('subnets', ref(f'aws_subnet.{"public" if public else "private"}[*].id')) \
                 .set('security_groups', [ref(f'aws_security_group.{n}.id')])
             svc.block('scaling_target').set('min_task_count', a['min_instances']).set('max_task_count', a['max_instances'])
-            deps = [ref(f'aws_iam_role_policy_attachment.{n}_execution'), ref('aws_iam_role_policy_attachment.infrastructure')]
+            # ECS reads the secrets when a task starts: the values must be written, and the execution role allowed
+            deps = [ref(f'aws_secretsmanager_secret_version.{e["to"]}') for e in self.spec.edges_from(n, 'secret')]
             if self.secret_values(a):
-                deps.insert(0, ref(f'aws_iam_role_policy.{n}_execution'))
+                deps.append(ref(f'aws_iam_role_policy.{n}_execution'))
+            deps += [ref(f'aws_iam_role_policy_attachment.{n}_execution'), ref('aws_iam_role_policy_attachment.infrastructure')]
             svc.set('depends_on', deps)
             out.append(svc)
         if public:
             self.warnings.append('The apps run in public subnets: ECS Express creates an internet-facing load balancer '
                                  'only there. Their security group admits nothing directly; the database, storage and '
                                  'secrets stay private.')
+        db_names = list(dict.fromkeys(e['to'].upper() for e in self.spec.access if e['type'] == 'postgres'))
+        if db_names:
+            self.warnings.append('The database admin password rotates every 7 days (managed by RDS), but '
+                                 f'{", ".join(f"{d}_PASSWORD" for d in db_names)} is read only when a task starts: the '
+                                 f'app should re-read it from {", ".join(f"{d}_SECRET_ARN" for d in db_names)} '
+                                 '(or restart its tasks).')
+        self.tradeoffs.append('Images: a public image, or one in this account\'s ECR (pulled with the execution role); '
+                              'another private registry needs credentials this version does not set.')
         return out
 
-    def env_values(self, a: dict) -> dict:
-        """The app's own env, then what its access edges inject (names in the README)."""
-        return {**{k: self.placeholder_or_text(v) for k, v in a['env'].items()}, **self.edge_env(a)}
-
-    def edge_env(self, a: dict) -> dict:
-        """Plain environment variables the app's edges set: bucket name, database host, port and name."""
-        env = {}
+    def edge_env(self, a: dict) -> list[tuple[str, object]]:
+        """Plain environment variables the app's edges set: bucket name; database host, port, name and the ARN of
+        the RDS-managed admin secret (the password rotates every 7 days: the app re-reads it there)."""
+        env = []
         for e in self.spec.edges_from(a['name']):
             t, T = e['to'], e['to'].upper()
             match e['type']:
                 case 'object_storage':
-                    env[f'{T}_BUCKET'] = ref(f'aws_s3_bucket.{t}.bucket')
+                    env.append((f'{T}_BUCKET', ref(f'aws_s3_bucket.{t}.bucket')))
                 case 'postgres':
-                    env[f'{T}_HOST'] = ref(f'aws_db_instance.{t}.address')
-                    env[f'{T}_PORT'] = '5432'
-                    env[f'{T}_NAME'] = t
+                    env += [(f'{T}_HOST', ref(f'aws_db_instance.{t}.address')), (f'{T}_PORT', '5432'), (f'{T}_NAME', t),
+                            (f'{T}_SECRET_ARN', ref(f'aws_db_instance.{t}.master_user_secret[0].secret_arn'))]
         return env
 
-    def secret_values(self, a: dict) -> dict:
+    def secret_values(self, a: dict) -> list[tuple[str, object]]:
         """Variables ECS reads from Secrets Manager at start: each secret, and the database user and password
         from the RDS-managed secret (JSON keys)."""
-        out = {}
+        out = []   # (name, value_from) pairs: a list, like edge_env, so a name set twice stays visible
         for e in self.spec.edges_from(a['name']):
             t, T = e['to'], e['to'].upper()
             match e['type']:
                 case 'secret':
-                    out[T] = ref(f'aws_secretsmanager_secret.{t}.arn')
+                    out.append((T, ref(f'aws_secretsmanager_secret.{t}.arn')))
                 case 'postgres':
                     arn = f'aws_db_instance.{t}.master_user_secret[0].secret_arn'
-                    out[f'{T}_USER'] = interp(f'${{{arn}}}:username::')
-                    out[f'{T}_PASSWORD'] = interp(f'${{{arn}}}:password::')
+                    out += [(f'{T}_USER', interp(f'${{{arn}}}:username::')), (f'{T}_PASSWORD', interp(f'${{{arn}}}:password::'))]
         return out
 
     def access(self) -> list[Hcl]:
-        """Least privilege per edge: task-role statements on each bucket, execution-role read of each secret, a
-        security-group rule app → database:5432."""
+        """Least privilege per edge: task-role statements on each bucket and on each database's admin secret (the
+        app re-reads the rotated password), execution-role read of each secret, a security-group rule app →
+        database:5432."""
         out = []
         roles = self.catalog['roles']['aws']
         for a in self.spec.of_type('container_app'):
             n = a['name']
             stores = self.spec.edges_from(n, 'object_storage')
-            if stores:
+            dbs = self.spec.edges_from(n, 'postgres')
+            if stores or dbs:
                 doc = Hcl('data', 'aws_iam_policy_document', f'{n}_task')
                 for e in stores:
                     r = roles[f'object_storage.{e["level"]}']
@@ -873,6 +909,9 @@ class AwsProject(Project):
                         .set('actions', r['objects']).set('resources', [interp(f'${{aws_s3_bucket.{e["to"]}.arn}}/*')])
                     doc.block('statement').set('sid', f'{e["to"].replace("_", "").capitalize()}List') \
                         .set('actions', r['bucket']).set('resources', [ref(f'aws_s3_bucket.{e["to"]}.arn')])
+                if dbs:
+                    doc.block('statement').set('sid', 'DatabaseAdminSecrets').set('actions', roles['secret.read']['secret']) \
+                        .set('resources', [ref(f'aws_db_instance.{e["to"]}.master_user_secret[0].secret_arn') for e in dbs])
                 out.append(doc)
                 out.append(Hcl('resource', 'aws_iam_role_policy', f'{n}_task').set('role', ref(f'aws_iam_role.{n}_task.id'))
                            .set('policy', ref(f'data.aws_iam_policy_document.{n}_task.json')))
@@ -891,7 +930,8 @@ class AwsProject(Project):
                            .set('role', ref(f'aws_iam_role.{n}_execution.id'))
                            .set('policy', ref(f'data.aws_iam_policy_document.{n}_execution.json')))
             for e in self.spec.edges_from(n, 'postgres'):
-                out.append(Hcl('resource', 'aws_vpc_security_group_ingress_rule', f'{e["to"]}_from_{n}')
+                # "__" cannot occur in a component name, so no other pair of names gives this label
+                out.append(Hcl('resource', 'aws_vpc_security_group_ingress_rule', f'{e["to"]}__from_{n}')
                            .set('security_group_id', ref(f'aws_security_group.{e["to"]}.id'))
                            .set('referenced_security_group_id', ref(f'aws_security_group.{n}.id'))
                            .set('ip_protocol', 'tcp').set('from_port', 5432).set('to_port', 5432))
@@ -915,16 +955,33 @@ class AwsProject(Project):
         return out
 
     def destroy_line(self) -> str:
-        return ('`terraform destroy` is refused while a database has `deletion_protection = true`: set it to false and '
-                'apply first. A final snapshot is kept; secrets stay recoverable for 7 days.')
+        """Only the protections this project has: database deletion protection and its fixed final snapshot name,
+        buckets that must be empty, secrets in their recovery window."""
+        s = self.spec
+        parts = ['`terraform destroy` removes the project.']
+        if s.of_type('postgres'):
+            parts.append('It is refused while a database has `deletion_protection = true`: set it to false and apply '
+                         'first. A final snapshot is kept under a fixed name (`final_snapshot_identifier`): delete or '
+                         'rename it before the next create/destroy cycle of this project, or that destroy fails.')
+        if s.of_type('object_storage'):
+            parts.append('Empty the buckets first (every object version, for a versioned bucket): they are not '
+                         'force-deleted, so destroy stops on a bucket that still holds objects.')
+        if s.of_type('secret'):
+            parts.append('Secrets stay recoverable for 7 days.')
+        return ' '.join(parts)
 
     def login_lines(self) -> list[str]:
+        """Terraform version, AWS sign-in, and what only apply checks (opt-in regions, availability)."""
         return ['- Terraform 1.11 or later (write-only secret arguments need it).',
-                '- AWS credentials for the target account: `aws configure` or `aws sso login` (or `AWS_PROFILE`).']
+                '- AWS credentials for the target account: `aws configure` or `aws sso login` (or `AWS_PROFILE`).',
+                f'- An opt-in region (one launched after March 2019) must be enabled in the account first; whether '
+                f'{self.spec.region} offers each service and instance class is only checked at apply.']
 
     def summary_lines(self) -> list[str]:
+        """One line per component with the secure defaults ECS, RDS, S3 and Secrets Manager were given."""
         s = self.spec
-        lines = [f'- Network {s.cidr}: 2 public + 2 private subnets over 2 availability zones, one NAT gateway.']
+        nat = ', one NAT gateway for the apps' if s.of_type('container_app') else ' (no NAT gateway: no app goes out)'
+        lines = [f'- Network {s.cidr}: 2 public + 2 private subnets over 2 availability zones{nat}.']
         for a in s.of_type('container_app'):
             lines.append(f'- `{a["name"]}`: ECS Express service ({a["cpu"]:g} vCPU, {a["memory_gb"]:g} GB, '
                          f'{a["min_instances"]}–{a["max_instances"]} tasks, port {a["port"]}), '
@@ -934,7 +991,8 @@ class AwsProject(Project):
             lines.append(f'- `{d["name"]}`: RDS PostgreSQL {d["version"]} ({self.catalog["sizes"][d["size"]]["aws"]}, '
                          f'{d["storage_gb"]} GB gp3, encrypted, private, backups {d["backup_days"]} days'
                          f'{", Multi-AZ" if d["high_availability"] else ""}, deletion protection on; admin password '
-                         f'managed by RDS in Secrets Manager).')
+                         f'managed by RDS in Secrets Manager, rotated every 7 days); reachable on 5432 only from the '
+                         f'security group of each app given access.')
         for o in s.of_type('object_storage'):
             lines.append(f'- `{o["name"]}`: S3 bucket, all public access blocked, encrypted (KMS)'
                          f'{", versioned" if o["versioning"] else ""}.')
@@ -943,7 +1001,8 @@ class AwsProject(Project):
         return lines
 
     def injected_env(self) -> dict[str, list[str]]:
-        return {a['name']: list(self.edge_env(a)) + list(self.secret_values(a)) for a in self.spec.of_type('container_app')
+        """Plain variables, then the ones ECS reads from Secrets Manager; apps without edges are left out."""
+        return {a['name']: [k for k, _ in self.edge_env(a) + self.secret_values(a)] for a in self.spec.of_type('container_app')
                 if self.edge_env(a) or self.secret_values(a)}
 
 
@@ -985,6 +1044,8 @@ class AzureProject(Project):
                 .set('location', self.spec.region).set('tags', ref('local.tags'))]
 
     def provider_blocks(self) -> list[Hcl]:
+        """azurerm with the resource providers the components need (azurerm 5 registers none by itself) and
+        Entra ID for storage (the accounts have no shared keys)."""
         rps = set(self.catalog['azure_resource_providers']['network'])
         for c in self.spec.components.values():
             rps.update(self.catalog['azure_resource_providers'][c['type']])
@@ -994,6 +1055,7 @@ class AzureProject(Project):
         return [p]
 
     def resource_files(self) -> dict[str, list[Hcl]]:
+        """One file per concern; the resource group and shared values open network.tf."""
         return {'network.tf': self.common() + self.network(), 'storage.tf': self.storage(),
                 'database.tf': self.database(), 'secrets.tf': self.secrets(), 'app.tf': self.apps(),
                 'access.tf': self.access(), 'outputs.tf': self.outputs()}
@@ -1136,7 +1198,11 @@ class AzureProject(Project):
             # behind holding a password the vault does not have. The secret depends only on the role assignment.
             srv.set('tags', ref('local.tags')).set('depends_on', [ref(f'azurerm_private_dns_zone_virtual_network_link.{n}'),
                                                                   ref(f'azurerm_key_vault_secret.{n}_password')])
-            srv.block('lifecycle').set('prevent_destroy', True)
+            life = srv.block('lifecycle').set('prevent_destroy', True)
+            if d['high_availability']:
+                # after a failover Azure swaps the primary and standby zones; without this the next apply would
+                # move the server back (azurerm docs, zone and standby_availability_zone)
+                life.set('ignore_changes', [ref('zone'), ref('high_availability[0].standby_availability_zone')])
             out.append(srv)
             out.append(Hcl('resource', 'azurerm_postgresql_flexible_server_database', n).set('name', n)
                        .set('server_id', ref(f'azurerm_postgresql_flexible_server.{n}.id')))
@@ -1146,17 +1212,27 @@ class AzureProject(Project):
                        .set('depends_on', [ref('azurerm_role_assignment.deployer_secrets')]))
         if self.dbs and any(d['high_availability'] and not self.zones for d in self.dbs):
             self.warnings.append(f'{self.spec.region} has no availability zones: the database standby is in the same zone.')
+        if self.dbs and self.database_edges():
+            self.tradeoffs.append('Database access is allowed from the whole apps subnet (one network security group '
+                                  'rule), not per app: an app without an access edge can reach port 5432 but has no '
+                                  'credentials (the password is only in the key vault secrets its edge grants).')
         return out
 
     def recovery_lines(self) -> list[str]:
-        """README only (not a warning): how to recover when the database password was written to only one place."""
-        if not self.dbs:
+        """README only (not a warning): the retry any key vault may need, and how to recover when the database
+        password was written to only one place."""
+        if not self.has_vault:
             return []
-        return ['', '## If an apply fails', '',
-                'The database password is written to the server and to the key vault by the same apply. After any partial '
-                'or failed apply, raise `administrator_password_wo_version` of the server and `value_wo_version` of its '
-                '`<db>_password` key vault secret together (to the same new number) so both receive the new password. '
-                'The first apply may need one retry while the key vault role assignment propagates.']
+        lines = ['', '## If an apply fails', '']
+        if self.dbs:
+            lines.append('The database password is written to the server and to the key vault by the same apply. After '
+                         'any partial or failed apply, raise `administrator_password_wo_version` of the server and '
+                         '`value_wo_version` of its `<db>_password` key vault secret together (to the same new number) '
+                         'so both receive the new password.')
+            lines.append('')
+        lines.append('The first apply may need one retry while the key vault role assignments propagate (writing a '
+                     'secret right after its role assignment can be refused for a few minutes).')
+        return lines
 
     def secrets(self) -> list[Hcl]:
         """One key vault for all secrets and database passwords; the deployer gets Secrets Officer to write them."""
@@ -1207,6 +1283,20 @@ class AzureProject(Project):
         env.block('workload_profile').set('name', 'Consumption').set('workload_profile_type', 'Consumption')
         env.set('tags', ref('local.tags')).set('depends_on', [ref('azurerm_subnet_nat_gateway_association.apps')])
         out.append(env)
+        if not self.any_public:
+            # An internal environment's addresses (<app>.<default_domain>) resolve nowhere by themselves: a private
+            # DNS zone for its domain, a wildcard record to its internal load balancer, linked to the VNet.
+            out.append(self.rg(Hcl('resource', 'azurerm_private_dns_zone', 'apps_env', comment='Private DNS for the internal environment: the app addresses resolve inside the VNet.')
+                               .set('name', ref('azurerm_container_app_environment.main.default_domain')), location=False)
+                       .set('tags', ref('local.tags')))
+            # azurerm 5 form: the record names its zone by id (no zone_name / resource_group_name any more)
+            out.append(Hcl('resource', 'azurerm_private_dns_a_record', 'apps_env').set('name', '*')
+                       .set('private_dns_zone_id', ref('azurerm_private_dns_zone.apps_env.id'))
+                       .set('ttl', 300).set('records', [ref('azurerm_container_app_environment.main.static_ip_address')])
+                       .set('tags', ref('local.tags')))
+            out.append(Hcl('resource', 'azurerm_private_dns_zone_virtual_network_link', 'apps_env').set('name', 'apps-env-link')
+                       .set('private_dns_zone_id', ref('azurerm_private_dns_zone.apps_env.id'))
+                       .set('virtual_network_id', ref('azurerm_virtual_network.main.id')))
         for a in self.apps_list:
             n = a['name']
             out.append(self.rg(Hcl('resource', 'azurerm_user_assigned_identity', n).set('name', f'id-{self.base}-{n.replace("_", "-")}'))
@@ -1229,35 +1319,30 @@ class AzureProject(Project):
             for k, sname, _ in self.vault_secrets_of(n):
                 c.block('env').set('name', k).set('secret_name', sname)
             app.set('tags', ref('local.tags'))
-            deps = [ref(f'azurerm_role_assignment.{n}_{e["to"]}') for e in self.spec.edges_from(n) if e['type'] in ('secret', 'postgres')]
+            deps = [ref(f'azurerm_role_assignment.{n}__{e["to"]}') for e in self.spec.edges_from(n) if e['type'] in ('secret', 'postgres')]
             if deps:
                 app.set('depends_on', deps)
             out.append(app)
         if self.any_public and not all(a['public_https'] for a in self.apps_list):
             self.warnings.append('Apps without public_https are reachable only from the other apps of the environment '
                                  '(the environment faces the internet because another app is public).')
+        self.tradeoffs.append('Images: this version pulls public images only (no registry credentials are set); a '
+                              'private registry or Azure Container Registry is for a later version.')
         return out
 
-    def env_values(self, a: dict) -> dict:
-        """The app's own env, then what the platform and its access edges inject (names in the README)."""
-        return {**{k: self.placeholder_or_text(v) for k, v in a['env'].items()}, **self.edge_env(a)}
-
-    def edge_env(self, a: dict) -> dict:
+    def edge_env(self, a: dict) -> list[tuple[str, object]]:
         """Plain environment variables: the app's identity client id, blob endpoint and container, database host,
         port, name and user."""
-        env = {}
-        env['AZURE_CLIENT_ID'] = ref(f'azurerm_user_assigned_identity.{a["name"]}.client_id')
+        env = [('AZURE_CLIENT_ID', ref(f'azurerm_user_assigned_identity.{a["name"]}.client_id'))]
         for e in self.spec.edges_from(a['name']):
             t, T = e['to'], e['to'].upper()
             match e['type']:
                 case 'object_storage':
-                    env[f'{T}_BLOB_ENDPOINT'] = ref(f'azurerm_storage_account.{t}.primary_blob_endpoint')
-                    env[f'{T}_CONTAINER'] = ref(f'azurerm_storage_container.{t}.name')
+                    env += [(f'{T}_BLOB_ENDPOINT', ref(f'azurerm_storage_account.{t}.primary_blob_endpoint')),
+                            (f'{T}_CONTAINER', ref(f'azurerm_storage_container.{t}.name'))]
                 case 'postgres':
-                    env[f'{T}_HOST'] = ref(f'azurerm_postgresql_flexible_server.{t}.fqdn')
-                    env[f'{T}_PORT'] = '5432'
-                    env[f'{T}_NAME'] = t
-                    env[f'{T}_USER'] = 'appadmin'
+                    env += [(f'{T}_HOST', ref(f'azurerm_postgresql_flexible_server.{t}.fqdn')), (f'{T}_PORT', '5432'),
+                            (f'{T}_NAME', t), (f'{T}_USER', 'appadmin')]
         return env
 
     def access(self) -> list[Hcl]:
@@ -1273,7 +1358,8 @@ class AzureProject(Project):
                     scope, role = ref(f'azurerm_key_vault_secret.{t}.resource_versionless_id'), roles['secret.read']
                 case 'postgres':
                     scope, role = ref(f'azurerm_key_vault_secret.{t}_password.resource_versionless_id'), roles['secret.read']
-            out.append(Hcl('resource', 'azurerm_role_assignment', f'{a}_{t}').set('scope', scope)
+            # "__" cannot occur in a component name, so no other (app, target) pair gives this label
+            out.append(Hcl('resource', 'azurerm_role_assignment', f'{a}__{t}').set('scope', scope)
                        .set('role_definition_name', role)
                        .set('principal_id', ref(f'azurerm_user_assigned_identity.{a}.principal_id'))
                        .set('principal_type', 'ServicePrincipal'))
@@ -1293,17 +1379,21 @@ class AzureProject(Project):
         return out
 
     def destroy_line(self) -> str:
+        """prevent_destroy on servers and storage accounts, and the key vault's reserved name."""
         return ('`terraform destroy` is refused while the database servers and storage accounts carry '
                 '`lifecycle { prevent_destroy = true }`: remove those blocks first. The key vault has purge '
                 'protection: its name stays reserved for 7 days after deletion.')
 
     def login_lines(self) -> list[str]:
+        """Terraform version, Azure sign-in and rights (role assignments), what only apply checks."""
         return ['- Terraform 1.11 or later (write-only secret arguments need it).',
                 '- `az login`, then `export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)`.',
                 '- Your account needs Owner (or Contributor + User Access Administrator) on the subscription: the '
-                'project creates role assignments.']
+                'project creates role assignments.',
+                f'- Whether {self.spec.region} offers each service and SKU to your subscription is only checked at apply.']
 
     def summary_lines(self) -> list[str]:
+        """One line per component with its secure defaults; the network line says what the NSGs do not filter."""
         s = self.spec
         lines = [f'- Resource group `rg-{self.base}`; VNet {s.cidr} with one subnet per need, default outbound access '
                  f'off{", NAT gateway for the apps" if self.apps_list else ""}; network security groups on the subnets filter the '
@@ -1311,8 +1401,9 @@ class AzureProject(Project):
                  f'policies are off; the private endpoints are protected by the storage account refusing public access and '
                  f'by role-based access).']
         for a in self.apps_list:
-            reach = 'public HTTPS address' if a['public_https'] else ('HTTPS address inside the network' if not self.any_public
-                                                                      else 'reachable from the other apps only')
+            reach = 'public HTTPS address' if a['public_https'] else (
+                'HTTPS address inside the network (a private DNS zone resolves it in the VNet)' if not self.any_public
+                else 'reachable from the other apps only')
             lines.append(f'- `{a["name"]}`: Container App ({a["cpu"]:g} vCPU, {a["memory_gb"]:g} GB, '
                          f'{a["min_instances"]}–{a["max_instances"]} replicas, port {a["port"]}), {reach}; its own managed identity.')
         for d in self.dbs:
@@ -1328,7 +1419,9 @@ class AzureProject(Project):
         return lines
 
     def injected_env(self) -> dict[str, list[str]]:
-        return {a['name']: list(self.edge_env(a)) + [k for k, _, _ in self.vault_secrets_of(a['name'])] for a in self.apps_list}
+        """The identity's client id and the plain variables, then the key vault references."""
+        return {a['name']: [k for k, _ in self.edge_env(a)] + [k for k, _, _ in self.vault_secrets_of(a['name'])]
+                for a in self.apps_list}
 
 
 # ------------------------------------------------------------------ CLI
@@ -1343,12 +1436,17 @@ def project_for(spec: Spec) -> Project:
 
 
 def check_env_names(spec: Spec, project: Project) -> None:
-    """An env name the user gave must not collide with one the mapper injects for an access edge."""
+    """An env name the user gave must not collide with one the mapper injects for an access edge, and two edges of
+    one app must not inject the same name (a secret "db_host" and an edge to the database "db" both set DB_HOST):
+    the container would get one value and silently lose the other."""
     for app, names in project.injected_env().items():
         given = set(spec.components[app]['env'])
-        for n in names:
+        for n in dict.fromkeys(names):   # each name once, in order
             if n in given:
                 spec.err(f'components.{app}.env.{n}', 'this name is set by an access edge; remove it from env')
+            elif names.count(n) > 1:
+                spec.err(f'components.{app}', f'two of its access edges set {n}; rename the component one of them '
+                                              f'points to (catalog.md → Access lists the names each edge sets)')
 
 
 def write_project(out: Path, files: dict[str, str], folder: str) -> Path:
@@ -1395,7 +1493,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     spec = Spec(raw, catalog, a.cloud, a.region)
     project = None
-    if not spec.errors and spec.cloud and spec.region:
+    if spec.cloud and spec.region:   # target known: env names are checked even when other errors were found
         project = project_for(spec)
         check_env_names(spec, project)
     if spec.errors:

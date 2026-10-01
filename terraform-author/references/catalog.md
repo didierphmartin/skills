@@ -25,8 +25,10 @@ execution and infrastructure roles, 30-day log group. **On AWS every container a
 `public_https`** (the first Express service of a network fixes whether its load balancer faces the internet), and a
 public app's tasks run in public subnets (a security group admits nothing directly). Azure: one Container Apps
 environment (Consumption profile, in the VNet, logs to Log Analytics), one container app with HTTPS ingress and its
-own managed identity per app. When no app is public the environment is internal (HTTPS inside the network); when
-one is, the others are reachable only from the apps.
+own managed identity per app. When no app is public the environment is internal (HTTPS inside the network, with a
+private DNS zone for its domain linked to the VNet); when one is, the others are reachable only from the apps.
+Images: on AWS a public image or one in the same account's ECR (pulled with the execution role); on Azure public
+images only in this version (a private registry or Azure Container Registry is for a later version).
 
 ### `postgres`
 A managed PostgreSQL server with one database named like the component.
@@ -73,10 +75,12 @@ An access edge `{"from": "<container_app>", "to": "<component>", "level": …}` 
 |---|---|---|---|---|
 | `object_storage` | `read`, `readwrite` (required) | IAM statements on the bucket | `Storage Blob Data Reader` / `Contributor` on the account | AWS `<NAME>_BUCKET`; Azure `<NAME>_BLOB_ENDPOINT`, `<NAME>_CONTAINER` |
 | `secret` | `read` (default) | execution role reads it at start | `Key Vault Secrets User` on that secret | `<NAME>` |
-| `postgres` | `connect` (default) | security group rule app → db:5432, admin credentials from the RDS secret | NSG rule apps → db:5432, password from the key vault | `<NAME>_HOST`, `<NAME>_PORT`, `<NAME>_NAME`, `<NAME>_USER`, `<NAME>_PASSWORD` |
+| `postgres` | `connect` (default) | security group rule app → db:5432, admin credentials from the RDS secret (read at task start; the task role may re-read it: the password rotates every 7 days) | NSG rule apps subnet → db:5432, password from the key vault | `<NAME>_HOST`, `<NAME>_PORT`, `<NAME>_NAME`, `<NAME>_USER`, `<NAME>_PASSWORD`; AWS also `<NAME>_SECRET_ARN` |
 
 `<NAME>` is the target component's name in upper case. On Azure every app also gets `AZURE_CLIENT_ID` (its identity).
-Do not set these names in `env`.
+Do not set these names in `env`, and do not give two components of one app's edges names that set the same
+variable (a secret `db_host` and a database `db` both set `DB_HOST`): the script refuses both. Apps connect to a
+database as its admin user in this version.
 
 ## Regions
 
@@ -150,7 +154,7 @@ Never in `components`: put the name in `"left_out"` and tell the user the senten
 |---|---|
 | `vm` | Virtual machines are not in this version: describe the workload as a container app (an image), or set up the VM by hand. |
 | `mysql` | MySQL is not in this version: use postgres, or add MySQL by hand after generation. |
-| `custom_domain` | A custom domain with its own certificate is not in this version (it needs a DNS zone you own): the app gets the cloud's generated HTTPS address; point your domain at it by hand. |
+| `custom_domain` | A custom domain with its own certificate is not in this version (it needs a DNS zone you own): the app gets the cloud's generated HTTPS address; add the domain and its certificate by hand (ECS Express listener / Container Apps custom domain). |
 | `private_key_vault` | A private-only secret store is not in this version: Terraform writes secret values through the store's API, so it stays reachable over the internet, protected by role-based access. |
 | `multi_region` | Several regions are not in this version: generate one project per region. |
 | `kubernetes` | Kubernetes clusters are not in this version: use a container app. |

@@ -17,6 +17,7 @@ class AwsMappingTest(unittest.TestCase):
         cls.shop = aws_files(fixture('all-options.json'))
         cls.tools = aws_files(fixture('internal-tools.json'), 'eu-central-1')
         cls.archive = aws_files(fixture('storage-only.json'), 'eu-north-1')
+        cls.ledger = aws_files(fixture('database-only.json'))
 
     def test_versions_and_provider(self):   # research §1 pinning; aws-full provider block
         self.assertIn('required_version = ">= 1.11"', self.cp['versions.tf'])
@@ -87,7 +88,7 @@ class AwsMappingTest(unittest.TestCase):
                       '    resources = ["${aws_s3_bucket.uploads.arn}/*"]', x)
         self.assertIn('actions   = ["secretsmanager:GetSecretValue"]\n'
                       '    resources = [aws_secretsmanager_secret.payment_api_key.arn, aws_db_instance.db.master_user_secret[0].secret_arn]', x)
-        self.assertIn('resource "aws_vpc_security_group_ingress_rule" "db_from_web"', x)
+        self.assertIn('resource "aws_vpc_security_group_ingress_rule" "db__from_web"', x)
         self.assertIn('referenced_security_group_id = aws_security_group.web.id', x)
         self.assertIn('actions   = ["s3:GetObject"]', self.shop['access.tf'])   # storefront: read only
 
@@ -97,8 +98,8 @@ class AwsMappingTest(unittest.TestCase):
         self.assertIn('name  = "DB_HOST"\n      value = aws_db_instance.db.address', a)
         self.assertIn('name       = "PAYMENT_API_KEY"\n      value_from = aws_secretsmanager_secret.payment_api_key.arn', a)
         self.assertIn('value_from = "${aws_db_instance.db.master_user_secret[0].secret_arn}:password::"', a)
-        self.assertIn('  depends_on = [aws_iam_role_policy.web_execution, aws_iam_role_policy_attachment.web_execution, '
-                      'aws_iam_role_policy_attachment.infrastructure]', a)
+        self.assertIn('  depends_on = [aws_secretsmanager_secret_version.payment_api_key, aws_iam_role_policy.web_execution, '
+                      'aws_iam_role_policy_attachment.web_execution, aws_iam_role_policy_attachment.infrastructure]', a)
 
     def test_only_the_files_needed(self):
         self.assertEqual(list(self.archive), ['versions.tf', 'providers.tf', 'variables.tf', 'network.tf', 'storage.tf',
@@ -112,8 +113,48 @@ class AwsMappingTest(unittest.TestCase):
         self.assertIn('cd ~/Documents/synergyAI/outputs/terraform/customer-portal-aws', r)
         self.assertIn('The apps run in public subnets', r)
         self.assertIn(CATALOG['out_of_v1']['custom_domain'], r)
-        self.assertIn('- `web`: `UPLOADS_BUCKET`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `PAYMENT_API_KEY`, `DB_USER`, `DB_PASSWORD`', r)
+        self.assertIn('- `web`: `UPLOADS_BUCKET`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_SECRET_ARN`, `PAYMENT_API_KEY`, '
+                      '`DB_USER`, `DB_PASSWORD`', r)
         self.assertEqual(self.cp['terraform.tfvars.example'].splitlines()[-1], 'container_image = ""')
+
+    def test_rotated_db_password_can_be_re_read(self):   # final fix 1: RDS rotates the managed secret every 7 days
+        a, x, r = self.cp['app.tf'], self.cp['access.tf'], self.cp['README.md']
+        self.assertIn('name  = "DB_SECRET_ARN"\n      value = aws_db_instance.db.master_user_secret[0].secret_arn', a)
+        self.assertIn('value_from = "${aws_db_instance.db.master_user_secret[0].secret_arn}:password::"', a)   # still injected
+        task = x.split('data "aws_iam_policy_document" "web_task"')[1].split('resource ')[0]
+        self.assertIn('sid       = "DatabaseAdminSecrets"\n    actions   = ["secretsmanager:GetSecretValue"]\n'
+                      '    resources = [aws_db_instance.db.master_user_secret[0].secret_arn]', task)
+        self.assertNotIn('payment_api_key', task)                                 # the task role reads only the db secret
+        self.assertIn('The database admin password rotates every 7 days (managed by RDS), but DB_PASSWORD is read only '
+                      'when a task starts: the app should re-read it from DB_SECRET_ARN (or restart its tasks).', r)
+        self.assertIn('connect to the database as its admin user in this version', r)
+        self.assertNotIn('admin user', self.archive['README.md'])
+
+    def test_nat_gateway_only_with_an_app(self):   # final fix 11
+        for f in (self.archive, self.ledger):
+            n = f['network.tf']
+            self.assertNotIn('aws_nat_gateway', n)
+            self.assertNotIn('aws_eip', n)
+            self.assertIn('resource "aws_route_table" "private" {\n  vpc_id = aws_vpc.main.id\n}', n)
+            self.assertIn('resource "aws_route_table_association" "private"', n)
+            self.assertIn('(no NAT gateway: no app goes out)', f['README.md'])
+        self.assertIn('resource "aws_eip" "nat"', self.cp['network.tf'])
+        self.assertIn('one NAT gateway for the apps', self.cp['README.md'])
+
+    def test_destroy_line_names_buckets_and_the_fixed_snapshot(self):   # final fix 12
+        r = self.cp['README.md']
+        self.assertIn('Empty the buckets first (every object version, for a versioned bucket)', r)
+        self.assertIn('fixed name (`final_snapshot_identifier`): delete or rename it', r)
+        self.assertNotIn('deletion_protection', self.archive['README.md'])           # no database
+        self.assertNotIn('Empty the buckets', self.ledger['README.md'])               # no bucket
+
+    def test_readme_regions_images_and_database_reach(self):   # final fixes 3, 9, 10
+        r = self.cp['README.md']
+        self.assertIn('An opt-in region (one launched after March 2019) must be enabled in the account first; whether '
+                      'eu-west-3 offers each service and instance class is only checked at apply.', r)
+        self.assertIn("one in this account's ECR (pulled with the execution role)", r)
+        self.assertIn('reachable on 5432 only from the security group of each app given access', r)
+        self.assertNotIn('Images:', self.ledger['README.md'])                         # no app, no image
 
     def test_multiline_text_stays_valid(self):   # descriptions land in comments: one line each
         raw = fixture('customer-portal.json')

@@ -494,6 +494,10 @@ resource "aws_ecs_express_gateway_service" "web" {
       name  = "DB_NAME"
       value = "db"
     }
+    environment {
+      name  = "DB_SECRET_ARN"
+      value = aws_db_instance.db.master_user_secret[0].secret_arn
+    }
     secret {
       name       = "PAYMENT_API_KEY"
       value_from = aws_secretsmanager_secret.payment_api_key.arn
@@ -516,7 +520,7 @@ resource "aws_ecs_express_gateway_service" "web" {
     min_task_count = 2
     max_task_count = 4
   }
-  depends_on = [aws_iam_role_policy.web_execution, aws_iam_role_policy_attachment.web_execution, aws_iam_role_policy_attachment.infrastructure]
+  depends_on = [aws_secretsmanager_secret_version.payment_api_key, aws_iam_role_policy.web_execution, aws_iam_role_policy_attachment.web_execution, aws_iam_role_policy_attachment.infrastructure]
 }
 ```
 
@@ -533,6 +537,11 @@ data "aws_iam_policy_document" "web_task" {
     sid       = "UploadsList"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.uploads.arn]
+  }
+  statement {
+    sid       = "DatabaseAdminSecrets"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_db_instance.db.master_user_secret[0].secret_arn]
   }
 }
 
@@ -554,7 +563,7 @@ resource "aws_iam_role_policy" "web_execution" {
   policy = data.aws_iam_policy_document.web_execution.json
 }
 
-resource "aws_vpc_security_group_ingress_rule" "db_from_web" {
+resource "aws_vpc_security_group_ingress_rule" "db__from_web" {
   security_group_id            = aws_security_group.db.id
   referenced_security_group_id = aws_security_group.web.id
   ip_protocol                  = "tcp"
@@ -1110,28 +1119,28 @@ resource "azurerm_container_app" "web" {
     }
   }
   tags       = local.tags
-  depends_on = [azurerm_role_assignment.web_payment_api_key, azurerm_role_assignment.web_db]
+  depends_on = [azurerm_role_assignment.web__payment_api_key, azurerm_role_assignment.web__db]
 }
 ```
 
 ### `access.tf`
 
 ```hcl
-resource "azurerm_role_assignment" "web_uploads" {
+resource "azurerm_role_assignment" "web__uploads" {
   scope                = azurerm_storage_account.uploads.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_user_assigned_identity.web.principal_id
   principal_type       = "ServicePrincipal"
 }
 
-resource "azurerm_role_assignment" "web_payment_api_key" {
+resource "azurerm_role_assignment" "web__payment_api_key" {
   scope                = azurerm_key_vault_secret.payment_api_key.resource_versionless_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.web.principal_id
   principal_type       = "ServicePrincipal"
 }
 
-resource "azurerm_role_assignment" "web_db" {
+resource "azurerm_role_assignment" "web__db" {
   scope                = azurerm_key_vault_secret.db_password.resource_versionless_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.web.principal_id

@@ -19,6 +19,7 @@ class AzureMappingTest(unittest.TestCase):
         cls.mixed = azure_files(fixture('azure-mixed-apps.json'))
         cls.archive = azure_files(fixture('storage-only.json'))
         cls.shop = azure_files(fixture('all-options.json'), 'eastus')
+        cls.ledger = azure_files(fixture('database-only.json'))
 
     def test_versions_and_provider(self):   # azurerm 5: no auto-registration; storage_use_azuread for keyless storage
         v = self.cp['versions.tf']
@@ -111,7 +112,7 @@ class AzureMappingTest(unittest.TestCase):
 
     def test_edges_are_scoped_role_assignments(self):
         x = self.cp['access.tf']
-        self.assertIn('resource "azurerm_role_assignment" "web_uploads" {\n'
+        self.assertIn('resource "azurerm_role_assignment" "web__uploads" {\n'
                       '  scope                = azurerm_storage_account.uploads.id\n'
                       '  role_definition_name = "Storage Blob Data Contributor"', x)
         self.assertIn('scope                = azurerm_key_vault_secret.payment_api_key.resource_versionless_id', x)
@@ -144,7 +145,7 @@ class AzureMappingTest(unittest.TestCase):
         r = self.cp['README.md']
         self.assertIn('`administrator_password_wo_version`', r)
         self.assertIn('`value_wo_version`', r)
-        self.assertIn('role assignment propagates', r)
+        self.assertIn('role assignments propagate', r)
 
     def test_readme_ha_wording_follows_the_mode(self):
         self.assertIn('zone-redundant standby', self.shop['README.md'])      # eastus has zones
@@ -176,7 +177,56 @@ class AzureMappingTest(unittest.TestCase):
         p.files()
         self.assertFalse([w for w in p.warnings if 'administrator_password_wo_version' in w])
         self.assertIn('## If an apply fails', p.readme())
-        self.assertNotIn('## If an apply fails', self.archive['README.md'])   # no database, no paragraph
+
+    def test_vault_retry_sentence_whenever_a_vault_exists(self):   # final fix 4
+        r = self.archive['README.md']                                         # a secret, no database: a vault
+        self.assertIn('## If an apply fails', r)
+        self.assertIn('The first apply may need one retry while the key vault role assignments propagate', r)
+        self.assertNotIn('administrator_password_wo_version', r)              # the password paragraph: databases only
+        self.assertIn('administrator_password_wo_version', self.ledger['README.md'])
+        self.assertIn('retry while the key vault role assignments propagate', self.ledger['README.md'])
+        bare = fixture('storage-only.json')
+        bare['components'] = bare['components'][:1]                           # storage only: no vault, no section
+        self.assertNotIn('## If an apply fails', azure_files(bare)['README.md'])
+
+    def test_internal_environment_has_a_private_dns_zone(self):   # final fix 2
+        a = self.tools['app.tf']
+        self.assertIn('resource "azurerm_private_dns_zone" "apps_env" {\n'
+                      '  name                = azurerm_container_app_environment.main.default_domain', a)
+        self.assertIn('resource "azurerm_private_dns_a_record" "apps_env" {\n  name                = "*"\n'
+                      '  private_dns_zone_id = azurerm_private_dns_zone.apps_env.id\n  ttl                 = 300\n'
+                      '  records             = [azurerm_container_app_environment.main.static_ip_address]', a)
+        self.assertIn('resource "azurerm_private_dns_zone_virtual_network_link" "apps_env" {', a)
+        self.assertIn('virtual_network_id  = azurerm_virtual_network.main.id', a)
+        self.assertIn('a private DNS zone resolves it in the VNet', self.tools['README.md'])
+        for f in (self.cp, self.mixed):                                       # an app is public: no internal zone
+            self.assertNotIn('apps_env', f['app.tf'])
+
+    def test_ha_server_ignores_zone_swaps_after_failover(self):   # final fix 14
+        life = 'lifecycle {\n    prevent_destroy = true\n    ignore_changes  = [zone, high_availability[0].standby_availability_zone]\n  }'
+        self.assertIn(life, self.tools['database.tf'])                        # SameZone HA
+        self.assertIn(life, self.shop['database.tf'])                         # ZoneRedundant HA
+        self.assertNotIn('ignore_changes', self.cp['database.tf'])            # no HA
+
+    def test_readme_images_regions_and_database_reach(self):   # final fixes 1 (admin), 3, 9, 10
+        r = self.cp['README.md']
+        self.assertIn('Images: this version pulls public images only (no registry credentials are set); a private '
+                      'registry or Azure Container Registry is for a later version.', r)
+        self.assertIn('Whether francecentral offers each service and SKU to your subscription is only checked at apply.', r)
+        self.assertIn('Database access is allowed from the whole apps subnet (one network security group rule), not per app', r)
+        self.assertIn('connect to the database as its admin user in this version', r)
+        for t in ('Images:', 'whole apps subnet', 'admin user'):
+            self.assertNotIn(t, self.ledger['README.md'])                     # no app
+
+    def test_role_assignment_labels_cannot_collide(self):   # final fix 6: web → x_y and web_x → y
+        import re
+        raw = {'name': 'labels', 'title': 'T', 'target': {'cloud': 'azure', 'region': 'westeurope'},
+               'components': [{'type': 'container_app', 'name': 'web', 'image': 'nginx:1.27'},
+                              {'type': 'container_app', 'name': 'web_x', 'image': 'nginx:1.27'},
+                              {'type': 'secret', 'name': 'x_y'}, {'type': 'secret', 'name': 'y'}],
+               'access': [{'from': 'web', 'to': 'x_y'}, {'from': 'web_x', 'to': 'y'}]}
+        labels = re.findall(r'resource "azurerm_role_assignment" "(\w+)"', azure_files(raw)['access.tf'])
+        self.assertEqual(len(labels), len(set(labels)), labels)
 
 
 if __name__ == '__main__':

@@ -115,7 +115,7 @@
   "out_of_v1": {
     "vm": "Virtual machines are not in this version: describe the workload as a container app (an image), or set up the VM by hand.",
     "mysql": "MySQL is not in this version: use postgres, or add MySQL by hand after generation.",
-    "custom_domain": "A custom domain with its own certificate is not in this version (it needs a DNS zone you own): the app gets the cloud's generated HTTPS address; point your domain at it by hand.",
+    "custom_domain": "A custom domain with its own certificate is not in this version (it needs a DNS zone you own): the app gets the cloud's generated HTTPS address; add the domain and its certificate by hand (ECS Express listener / Container Apps custom domain).",
     "private_key_vault": "A private-only secret store is not in this version: Terraform writes secret values through the store's API, so it stays reachable over the internet, protected by role-based access.",
     "multi_region": "Several regions are not in this version: generate one project per region.",
     "kubernetes": "Kubernetes clusters are not in this version: use a container app.",

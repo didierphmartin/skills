@@ -45,6 +45,8 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(c['object_storage']['levels'], ['read', 'readwrite'])
         for k in ('vm', 'mysql', 'custom_domain', 'private_key_vault', 'multi_region'):
             self.assertIn(k, CATALOG['out_of_v1'])
+        self.assertTrue(CATALOG['out_of_v1']['custom_domain'].endswith(   # final fix 8: what the user does by hand
+            'add the domain and its certificate by hand (ECS Express listener / Container Apps custom domain).'))
 
     def test_roles(self):
         r = CATALOG['roles']
@@ -78,6 +80,12 @@ class CatalogDocTest(unittest.TestCase):
                 if 'default' in o and not isinstance(o['default'], (dict, str)):
                     d = 'true' if o['default'] is True else 'false' if o['default'] is False else str(o['default'])
                     self.assertRegex(self.md, rf'`{opt}` \| [^|]*\| `{re.escape(d)}`', f'{ctype}.{opt} default')
+
+    def test_access_and_images(self):   # final fixes 1, 2, 3
+        self.assertIn('AWS also `<NAME>_SECRET_ARN`', self.md)
+        self.assertIn('private DNS zone for its domain linked to the VNet', self.md)
+        self.assertIn("on Azure public\nimages only in this version", self.md)
+        self.assertIn("same account's ECR (pulled with the execution role)", self.md)
 
     def test_sizes_and_out_of_v1(self):
         for name, s in CATALOG['sizes'].items():

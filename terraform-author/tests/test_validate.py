@@ -16,7 +16,7 @@ def with_app(*comps, access=(), **over):
 class ValidateTest(unittest.TestCase):
     def test_fixtures_are_valid(self):
         for f in ('customer-portal.json', 'customer-portal-fr.json', 'internal-tools.json', 'all-options.json',
-                  'storage-only.json', 'azure-mixed-apps.json'):
+                  'storage-only.json', 'azure-mixed-apps.json', 'database-only.json'):
             self.assertEqual(errors_of(fixture(f)), [], f)
 
     def test_defaults_are_filled(self):
@@ -107,6 +107,12 @@ class ValidateTest(unittest.TestCase):
         self.assertIn('lowercase slug', errors_of(minimal(components=[{'type': 'object_storage', 'name': 'My-Files'}]))[0])
         clash = minimal(components=[{'type': 'postgres', 'name': 'db'}, {'type': 'secret', 'name': 'db_password'}])
         self.assertIn('taken by the generated password of the database "db"', errors_of(clash)[0])
+        self.assertIn('reserved', errors_of(minimal(components=[{'type': 'object_storage', 'name': 'apps_env'}]))[0])
+
+    def test_secret_cannot_take_the_vault_name_of_a_database_password(self):   # final fix 6: both db-admin-password
+        clash = minimal(components=[{'type': 'postgres', 'name': 'db'}, {'type': 'secret', 'name': 'db_admin_password'}])
+        self.assertEqual(errors_of(clash), ['components.db_admin_password: this name is taken by the generated password '
+                                            'of the database "db"; rename the secret'])
 
     def test_terraform_reserved_variable_names(self):
         raw = minimal(components=[{'type': 'secret', 'name': 'version'}])
@@ -151,6 +157,24 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(errors_of(raw, cloud='azure', region='westeurope'),
                          ['components.reports_2026: on Azure its storage account name would match the one of '
                           '"reports_2025" (first 8 letters and digits); rename one'])
+
+    def test_cloud_rules_run_alongside_other_errors(self):   # final fix 5: one revision sees everything
+        raw = minimal(title='', components=[{'type': 'postgres', 'name': 'pg', 'high_availability': True}])
+        errs = errors_of(raw, cloud='azure', region='westeurope')
+        self.assertEqual(len(errs), 2, errs)
+        self.assertTrue(errs[0].startswith('title:'))
+        self.assertTrue(errs[1].startswith('components.pg.high_availability: size "small" is Burstable'))
+        mixed = with_app(app(public_https=True), app('admin', public_https=False), name='Bad')
+        self.assertEqual(len(errors_of(mixed)), 2)                        # name + AWS public_https rule
+
+    def test_cloud_rules_survive_bad_values(self):   # final fix 5: .get on sizes, no crash on unchecked values
+        for size in ('huge', ['small'], {'a': 1}):
+            raw = minimal(components=[{'type': 'postgres', 'name': 'pg', 'size': size, 'high_availability': True}])
+            errs = errors_of(raw, cloud='azure', region='westeurope')
+            self.assertEqual([e for e in errs if 'Burstable' in e], [], errs)
+            self.assertTrue(any(e.startswith('components.pg.size') for e in errs))
+        bad = with_app(app(public_https=['x']), app('admin', public_https=True))
+        self.assertTrue(any('public_https' in e for e in errors_of(bad)))
 
     def test_aws_apps_share_public_https(self):
         raw = with_app(app(public_https=True), app('admin', public_https=False))

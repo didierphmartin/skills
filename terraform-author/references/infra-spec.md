@@ -21,8 +21,9 @@ One cloud-neutral description of an application's infrastructure. `scripts/creat
 ## Components
 
 Each is `{"type": "<type>", "name": "<name>", …options}`; options and defaults per type are in catalog.md.
-Names are lowercase letters, digits and single `_` (1–20, unique; not `blob` or `deployer`); the environment
-variables an edge injects use the name in upper case (`uploads` → `UPLOADS_BUCKET`).
+Names are lowercase letters, digits and single `_` (1–20, unique; not `blob`, `deployer` or `apps_env`); the
+environment variables an edge injects use the name in upper case (`uploads` → `UPLOADS_BUCKET`), and no two edges of
+one app may set the same variable.
 
 - `container_app` — `image` is required: the image the user gave (`"ghcr.io/acme/portal:2.1"`) or
   `{"placeholder": "container_image"}`. `env` values are text or placeholders, never secrets (use a `secret` and an
@@ -31,7 +32,7 @@ variables an edge injects use the name in upper case (`uploads` → `UPLOADS_BUC
 - `object_storage` — `versioning` (default true). On Azure two storage names must differ in their first 8
   letters and digits.
 - `secret` — no options, no value: the user types it at apply time (`TF_VAR_<name>`). A secret cannot be named
-  `<postgres name>_password` (the database's generated password uses that name).
+  `<postgres name>_password` or `<postgres name>_admin_password` (the database's generated password uses them).
 
 ## Access
 

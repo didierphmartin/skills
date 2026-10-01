@@ -101,6 +101,12 @@ class ReferencesTest(unittest.TestCase):
                        'export TF_VAR_', 'ARM_SUBSCRIPTION_ID', 'aws configure', '.terraform.lock.hcl', 'terraform destroy'):
             self.assertIn(needle, d)
 
+    def test_deploy_says_what_v1_leaves_to_the_user(self):   # final fixes 3, 4, 9, 12
+        d = (SKILL / 'references' / 'deploy.md').read_text(encoding='utf-8')
+        for needle in ("same account's ECR", 'On Azure this\nversion pulls public images only', '(Azure projects with a key vault)',
+                       'opt-in region must be enabled', 'empty the buckets first', 'final\nsnapshot of a database has a fixed name'):
+            self.assertIn(needle, d)
+
 
 class StandInExitCodeTest(unittest.TestCase):
     """tests/dev/run_skill_script.py reports, and exits with, the script's real exit code."""

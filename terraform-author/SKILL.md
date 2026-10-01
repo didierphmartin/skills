@@ -67,6 +67,6 @@ context-references: references/infra-spec.md, references/catalog.md
 6. Reply with rule 7's lines, filled in from the report.
 
 What the script checks, and so what `INVALID` means: every rule in `references/infra-spec.md` and `catalog.md`
-(types and options, regions, names, edges, placeholders, Azure high availability on `small`, AWS apps sharing
-`public_https`). For maintainers: references/example-customer-portal.md shows a description, its spec and the files
-for both clouds; references/deploy.md is what the user runs.
+(types and options, regions, names, edges, placeholders, environment variable names set twice, Azure high
+availability on `small`, AWS apps sharing `public_https`). For maintainers: references/example-customer-portal.md
+shows a description, its spec and the files for both clouds; references/deploy.md is what the user runs.
