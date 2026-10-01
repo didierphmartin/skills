@@ -381,3 +381,553 @@ class Spec:
         out = copy.deepcopy(self.raw)
         out['target'] = {'cloud': self.cloud, 'region': self.region}
         return out
+
+
+# ------------------------------------------------------------------ HCL writer
+class Raw(str):
+    """An HCL expression written as is (a reference, a function call, an interpolated string)."""
+
+
+class Hcl:
+    """One HCL block — attributes and nested blocks — rendered exactly as `terraform fmt` writes it.
+
+    Why a writer: the gate runs `terraform fmt -check`, so alignment matters. fmt aligns the "=" of consecutive
+    single-line attributes; a nested block or a comment ends the run. Values are Python data (str → quoted,
+    Raw → as is, bool, int/float, list, dict) so mappers never build HCL text by hand."""
+
+    def __init__(self, kind: str, *labels: str, comment: str | None = None):
+        self.kind, self.labels, self.comment = kind, labels, comment
+        self.items: list = []
+
+    def set(self, key: str, value) -> 'Hcl':
+        """Add an attribute; returns self so attributes chain."""
+        self.items.append(('attr', key, value))
+        return self
+
+    def block(self, kind: str, *labels: str) -> 'Hcl':
+        """Add a nested block and return it (to fill it)."""
+        child = Hcl(kind, *labels)
+        self.items.append(('block', child))
+        return child
+
+    def object(self, key: str) -> 'Hcl':
+        """Add a multi-line object attribute (`key = { … }`, as in required_providers) and return it to fill."""
+        child = Hcl(key)
+        self.items.append(('object', key, child))
+        return child
+
+    def note(self, text: str) -> 'Hcl':
+        """A comment line inside the block (ends an alignment run, as in fmt)."""
+        self.items.append(('comment', text))
+        return self
+
+    @staticmethod
+    def value(v) -> str:
+        """One value on one line."""
+        match v:
+            case Raw():
+                return str(v)
+            case bool():
+                return 'true' if v else 'false'
+            case int():
+                return str(v)
+            case float():
+                return str(int(v)) if v.is_integer() else repr(v)
+            case str():
+                esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('${', '$${').replace('%{', '%%{')
+                return f'"{esc}"'
+            case list():
+                return '[' + ', '.join(Hcl.value(x) for x in v) + ']'
+            case dict():
+                if not v:
+                    return '{}'
+                keys = [k if IDENT_RE.match(k) else Hcl.value(k) for k in v]
+                return '{ ' + ', '.join(f'{k} = {Hcl.value(x)}' for k, x in zip(keys, v.values())) + ' }'
+        raise TypeError(f'no HCL form for {v!r}')
+
+    def render(self, depth: int = 0, head: str | None = None) -> list[str]:
+        """The block's lines at this depth (two spaces per level); `head` replaces "kind labels" for objects."""
+        pad = '  ' * depth
+        head = head or ' '.join([self.kind] + [f'"{lab}"' for lab in self.labels])
+        lines = [f'{pad}# {self.comment}'] if self.comment else []
+        if not self.items:
+            return lines + [f'{pad}{head} {{}}']
+        lines.append(f'{pad}{head} {{')
+        run: list[tuple[str, str]] = []
+
+        def flush():
+            width = max((len(k) for k, _ in run), default=0)
+            lines.extend(f'{pad}  {k.ljust(width)} = {v}' for k, v in run)
+            run.clear()
+
+        for item in self.items:
+            match item:
+                case ('attr', key, value):
+                    run.append((key, self.value(value)))
+                case ('block', child):
+                    flush()
+                    lines.extend(child.render(depth + 1))
+                case ('object', key, child):
+                    flush()
+                    lines.extend(child.render(depth + 1, head=f'{key} ='))
+                case ('comment', text):
+                    flush()
+                    lines.append(f'{pad}  # {text}')
+        flush()
+        lines.append(f'{pad}}}')
+        return lines
+
+
+def hcl_file(blocks: list[Hcl]) -> str:
+    """Top-level blocks separated by one blank line, ending with a newline (fmt's file layout)."""
+    return '\n\n'.join('\n'.join(b.render()) for b in blocks) + '\n'
+
+
+def ref(text: str) -> Raw:
+    """A reference or expression (aws_vpc.main.id, var.x, a function call), written unquoted."""
+    return Raw(text)
+
+
+def interp(text: str) -> Raw:
+    """A quoted string with ${...} interpolation, e.g. interp('${aws_s3_bucket.x.arn}/*')."""
+    return Raw('"' + text.replace('"', '\\"') + '"')
+
+
+def prefix(text: str, maxlen: int) -> str:
+    """A name prefix that ends with "-", fits in maxlen and never has "--" (AWS *_prefix arguments)."""
+    text = re.sub('-+', '-', text.replace('_', '-'))
+    return text[:maxlen - 1].rstrip('-') + '-'
+
+
+# ------------------------------------------------------------------ projects
+class Project:
+    """The Terraform project for one spec on one cloud: every generated file as text.
+
+    Why a base class: the files every target shares (versions, variables, tfvars example, README, .gitignore,
+    spec.json) are written once here; AwsProject and AzureProject fill the resource files (`resource_files`) and
+    say which provider they pin, the trade-offs they took and the env names they inject."""
+
+    cloud = ''
+    providers: tuple[str, ...] = ()
+
+    def __init__(self, spec: Spec):
+        self.spec, self.catalog = spec, spec.catalog
+        self.base = f'{spec.name}-{spec.environment}'
+        self.warnings: list[str] = []
+        net = ipaddress.ip_network(spec.cidr)
+        self.subnets = [str(s) for s in list(net.subnets(new_prefix=24))[:4]]
+        self.newbits = 24 - net.prefixlen
+
+    # ---- shared files
+    def files(self) -> dict[str, str]:
+        """File name → content, in the order they are listed in the report."""
+        out = {'versions.tf': self.versions_tf(), 'providers.tf': hcl_file(self.provider_blocks()),
+               'variables.tf': self.variables_tf()}
+        for fname, blocks in self.resource_files().items():
+            if blocks:
+                out[fname] = hcl_file(blocks)
+        out['terraform.tfvars.example'] = self.tfvars_example()
+        out['README.md'] = self.readme()
+        out['.gitignore'] = '.terraform/\n*.tfstate\n*.tfstate.*\n*.tfvars\n!terraform.tfvars.example\ncrash.log\ntfplan\n'
+        out['spec.json'] = json.dumps(self.spec.saved(), indent=2, ensure_ascii=False) + '\n'
+        return out
+
+    def versions_tf(self) -> str:
+        """Terraform >= 1.11 (write-only arguments) and the providers pinned to the majors the lab validated."""
+        tf = Hcl('terraform').set('required_version', self.catalog['terraform'])
+        req = tf.block('required_providers')
+        for p in self.providers:
+            pv = self.catalog['providers'][p]
+            req.object(p).set('source', pv['source']).set('version', pv['version'])
+        return hcl_file([tf])
+
+    def variables_tf(self) -> str:
+        """Placeholders become variables without a default (plan stops until they are filled); secrets become
+        ephemeral sensitive variables, so their values reach only write-only arguments and never the state."""
+        blocks = []
+        for n, d in self.spec.placeholders.items():
+            blocks.append(Hcl('variable', n).set('description', d).set('type', ref('string')))
+        for s in self.spec.of_type('secret'):
+            blocks.append(Hcl('variable', s['name'])
+                          .set('description', f'Value of the secret "{s["name"]}". Typed at apply time (TF_VAR_{s["name"]}); never stored in state.')
+                          .set('type', ref('string')).set('sensitive', True).set('ephemeral', True))
+        return hcl_file(blocks) if blocks else '# No input variables: nothing to fill before plan.\n'
+
+    def tfvars_example(self) -> str:
+        """The file the user copies to terraform.tfvars: one line per placeholder, its description above it."""
+        lines = ['# Copy to terraform.tfvars and fill every value. Secrets are not here: export them as TF_VAR_<name>.']
+        for n, d in self.spec.placeholders.items():
+            lines += [f'# {d}', f'{n} = ""']
+        return '\n'.join(lines) + '\n'
+
+    def placeholder_or_text(self, v):
+        """A spec value as HCL: {"placeholder": n} → var.n, text → a quoted string."""
+        return ref(f'var.{v["placeholder"]}') if isinstance(v, dict) else v
+
+    def readme(self) -> str:
+        """The project's README: what to fill and type, the commands, what was generated, the env names the apps
+        receive, and the trade-offs — so the chat reply can stay a few lines."""
+        s = self.spec
+        secrets = [c['name'] for c in s.of_type('secret')]
+        lines = [f'# {s.title} — Terraform for {self.cloud_title} ({s.region})', '',
+                 f'Generated by the SynergyAI terraform-author skill from `spec.json` (environment `{s.environment}`).',
+                 'Rerun the skill to change it: generated files are replaced, other files in this folder are kept.', '',
+                 '## Before the first plan', '']
+        lines += self.login_lines()
+        if s.placeholders:
+            lines += ['', 'Fill the placeholders: `cp terraform.tfvars.example terraform.tfvars`, then set:', '']
+            lines += [f'- `{n}` — {d}' for n, d in s.placeholders.items()]
+        if secrets:
+            lines += ['', 'Secrets are typed at apply time and never written to state or to a file:', '']
+            lines += [f'- `export TF_VAR_{n}=\'…\'`' for n in secrets]
+        lines += ['', '## Commands', '', '```sh', f'cd {USER_ROOT}/{s.name}-{self.cloud}',
+                  'terraform init', 'terraform validate', 'terraform plan -out tfplan', 'terraform apply tfplan',
+                  '```', '', 'Commit `.terraform.lock.hcl` with the project. State is local (`terraform.tfstate`): '
+                  'keep it safe, or move it to a remote backend before a team works on it.',
+                  self.destroy_line(), '', '## What was generated', '']
+        lines += self.summary_lines()
+        env = self.injected_env()
+        if env:
+            lines += ['', '## Environment variables the apps receive', '']
+            for app, names in env.items():
+                lines.append(f'- `{app}`: ' + ', '.join(f'`{n}`' for n in names))
+        if self.warnings or s.left_out:
+            lines += ['', '## Trade-offs and what was left out', '']
+            lines += [f'- {w}' for w in self.warnings]
+            lines += [f'- Left out: {self.catalog["out_of_v1"][x]}' for x in s.left_out]
+        return '\n'.join(lines) + '\n'
+
+    # ---- what subclasses provide
+    cloud_title = ''
+
+    def destroy_line(self) -> str:
+        """How `terraform destroy` meets this cloud's deletion protection (README)."""
+        raise NotImplementedError
+
+    def provider_blocks(self) -> list[Hcl]:
+        """providers.tf: the provider configured for the spec's region."""
+        raise NotImplementedError
+
+    def resource_files(self) -> dict[str, list[Hcl]]:
+        """File name → blocks; a file whose list is empty is not written (no app → no app.tf)."""
+        raise NotImplementedError
+
+    def login_lines(self) -> list[str]:
+        """README prerequisites: Terraform version and how to sign in to this cloud."""
+        raise NotImplementedError
+
+    def summary_lines(self) -> list[str]:
+        """README "What was generated": one line per component with its secure defaults."""
+        raise NotImplementedError
+
+    def injected_env(self) -> dict[str, list[str]]:
+        """App → environment variable names its access edges set (README, and the env collision check)."""
+        raise NotImplementedError
+
+
+class AwsProject(Project):
+    """AWS (hashicorp/aws ~> 6.0), in the forms of the lab's validated scratch/aws-full/main.tf.
+
+    Network: VPC, 2 public + 2 private subnets over 2 AZs, internet gateway, one NAT gateway; security groups with
+    separate rule resources (inline rules referencing each other made the baseline's Cycle). Apps: ECS Express
+    (HTTPS load balancer and certificate managed by ECS). Public apps run in the public subnets because Express
+    makes an internet-facing load balancer only there."""
+
+    cloud = 'aws'
+    cloud_title = 'AWS'
+    providers = ('aws',)
+
+    def provider_blocks(self) -> list[Hcl]:
+        p = Hcl('provider', 'aws').set('region', self.spec.region)
+        p.block('default_tags').set('tags', {**self.spec.tags, 'managed_by': 'terraform'})
+        return [p]
+
+    def resource_files(self) -> dict[str, list[Hcl]]:
+        return {'network.tf': self.network(), 'storage.tf': self.storage(), 'database.tf': self.database(),
+                'secrets.tf': self.secrets(), 'app.tf': self.apps(), 'access.tf': self.access(),
+                'outputs.tf': self.outputs()}
+
+    def network(self) -> list[Hcl]:
+        """VPC over 2 AZs, public and private subnets, one NAT gateway, one security group per app and database
+        (rules are separate resources: inline rules referencing each other made the baseline's Cycle)."""
+        b = self.base
+        out = [Hcl('data', 'aws_availability_zones', 'available').set('state', 'available'),
+               Hcl('locals').set('azs', ref('slice(data.aws_availability_zones.available.names, 0, 2)')),
+               Hcl('resource', 'aws_vpc', 'main').set('cidr_block', self.spec.cidr).set('enable_dns_support', True)
+               .set('enable_dns_hostnames', True).set('tags', {'Name': f'{b}-vpc'}),
+               Hcl('resource', 'aws_subnet', 'public').set('count', 2).set('vpc_id', ref('aws_vpc.main.id'))
+               .set('cidr_block', ref(f'cidrsubnet(aws_vpc.main.cidr_block, {self.newbits}, count.index)'))
+               .set('availability_zone', ref('local.azs[count.index]')).set('map_public_ip_on_launch', False)
+               .set('tags', {'Name': Raw(f'"{b}-public-${{count.index}}"')}),
+               Hcl('resource', 'aws_subnet', 'private').set('count', 2).set('vpc_id', ref('aws_vpc.main.id'))
+               .set('cidr_block', ref(f'cidrsubnet(aws_vpc.main.cidr_block, {self.newbits}, count.index + 2)'))
+               .set('availability_zone', ref('local.azs[count.index]'))
+               .set('tags', {'Name': Raw(f'"{b}-private-${{count.index}}"')}),
+               Hcl('resource', 'aws_internet_gateway', 'main').set('vpc_id', ref('aws_vpc.main.id')),
+               Hcl('resource', 'aws_eip', 'nat').set('domain', 'vpc'),
+               Hcl('resource', 'aws_nat_gateway', 'main').set('allocation_id', ref('aws_eip.nat.id'))
+               .set('subnet_id', ref('aws_subnet.public[0].id')).set('depends_on', [ref('aws_internet_gateway.main')])]
+        pub = Hcl('resource', 'aws_route_table', 'public').set('vpc_id', ref('aws_vpc.main.id'))
+        pub.block('route').set('cidr_block', '0.0.0.0/0').set('gateway_id', ref('aws_internet_gateway.main.id'))
+        priv = Hcl('resource', 'aws_route_table', 'private').set('vpc_id', ref('aws_vpc.main.id'))
+        priv.block('route').set('cidr_block', '0.0.0.0/0').set('nat_gateway_id', ref('aws_nat_gateway.main.id'))
+        out += [pub, priv]
+        for kind in ('public', 'private'):
+            out.append(Hcl('resource', 'aws_route_table_association', kind).set('count', 2)
+                       .set('subnet_id', ref(f'aws_subnet.{kind}[count.index].id'))
+                       .set('route_table_id', ref(f'aws_route_table.{kind}.id')))
+        for a in self.spec.of_type('container_app'):
+            n = a['name']
+            out.append(Hcl('resource', 'aws_security_group', n, comment=f'App {n}: outbound only; its load balancer is managed by ECS Express.')
+                       .set('name_prefix', prefix(f'{b}-{n}', 100)).set('description', f'App {n}')
+                       .set('vpc_id', ref('aws_vpc.main.id')))
+            out.append(Hcl('resource', 'aws_vpc_security_group_egress_rule', f'{n}_all')
+                       .set('security_group_id', ref(f'aws_security_group.{n}.id')).set('ip_protocol', '-1')
+                       .set('cidr_ipv4', '0.0.0.0/0'))
+        for d in self.spec.of_type('postgres'):
+            n = d['name']
+            out.append(Hcl('resource', 'aws_security_group', n, comment=f'Database {n}: inbound only from the apps given access (access.tf).')
+                       .set('name_prefix', prefix(f'{b}-{n}', 100)).set('description', f'Database {n}')
+                       .set('vpc_id', ref('aws_vpc.main.id')))
+        return out
+
+    def storage(self) -> list[Hcl]:
+        """Per bucket: the four public-access blocks, owner-enforced objects, KMS encryption, versioning if asked."""
+        out = []
+        for s in self.spec.of_type('object_storage'):
+            n = s['name']
+            out.append(Hcl('resource', 'aws_s3_bucket', n).set('bucket_prefix', prefix(f'{self.base}-{n}', 37)))
+            out.append(Hcl('resource', 'aws_s3_bucket_public_access_block', n).set('bucket', ref(f'aws_s3_bucket.{n}.id'))
+                       .set('block_public_acls', True).set('block_public_policy', True).set('ignore_public_acls', True)
+                       .set('restrict_public_buckets', True))
+            own = Hcl('resource', 'aws_s3_bucket_ownership_controls', n).set('bucket', ref(f'aws_s3_bucket.{n}.id'))
+            own.block('rule').set('object_ownership', 'BucketOwnerEnforced')
+            sse = Hcl('resource', 'aws_s3_bucket_server_side_encryption_configuration', n).set('bucket', ref(f'aws_s3_bucket.{n}.id'))
+            rule = sse.block('rule')
+            rule.block('apply_server_side_encryption_by_default').set('sse_algorithm', 'aws:kms')
+            rule.set('bucket_key_enabled', True)
+            out += [own, sse]
+            if s['versioning']:
+                v = Hcl('resource', 'aws_s3_bucket_versioning', n).set('bucket', ref(f'aws_s3_bucket.{n}.id'))
+                v.block('versioning_configuration').set('status', 'Enabled')
+                out.append(v)
+        return out
+
+    def database(self) -> list[Hcl]:
+        """RDS PostgreSQL in the private subnets: encrypted, private, password managed by RDS, backups as asked,
+        deletion protection and a final snapshot."""
+        dbs = self.spec.of_type('postgres')
+        if not dbs:
+            return []
+        out = [Hcl('resource', 'aws_db_subnet_group', 'main').set('name_prefix', prefix(f'{self.base}-db', 100))
+               .set('subnet_ids', ref('aws_subnet.private[*].id'))]
+        for d in dbs:
+            n = d['name']
+            out.append(Hcl('resource', 'aws_db_instance', n)
+                       .set('identifier_prefix', prefix(f'{self.base}-{n}', 40)).set('engine', 'postgres')
+                       .set('engine_version', d['version'])
+                       .set('instance_class', self.catalog['sizes'][d['size']]['aws'])
+                       .set('allocated_storage', d['storage_gb']).set('max_allocated_storage', d['storage_gb'] * 2)
+                       .set('storage_type', 'gp3').set('storage_encrypted', True).set('db_name', n)
+                       .set('username', 'appadmin').set('manage_master_user_password', True)
+                       .set('db_subnet_group_name', ref('aws_db_subnet_group.main.name'))
+                       .set('vpc_security_group_ids', [ref(f'aws_security_group.{n}.id')])
+                       .set('publicly_accessible', False).set('multi_az', d['high_availability'])
+                       .set('backup_retention_period', d['backup_days']).set('deletion_protection', True)
+                       .set('skip_final_snapshot', False)
+                       .set('final_snapshot_identifier', f'{self.base}-{n.replace("_", "-")}-final')
+                       .set('copy_tags_to_snapshot', True))
+        return out
+
+    def secrets(self) -> list[Hcl]:
+        """Secrets Manager secrets whose value is written once from the ephemeral variable (secret_string_wo)."""
+        out = []
+        for s in self.spec.of_type('secret'):
+            n = s['name']
+            out.append(Hcl('resource', 'aws_secretsmanager_secret', n)
+                       .set('name_prefix', f'{self.base}/{n.replace("_", "-")}-').set('recovery_window_in_days', 7))
+            out.append(Hcl('resource', 'aws_secretsmanager_secret_version', n)
+                       .set('secret_id', ref(f'aws_secretsmanager_secret.{n}.id'))
+                       .set('secret_string_wo', ref(f'var.{n}')).set('secret_string_wo_version', 1))
+        return out
+
+    def apps(self) -> list[Hcl]:
+        """ECS Express services: roles, log group, container with its env and secrets, scaling; public apps in the
+        public subnets (internet-facing load balancer), others in the private ones (internal load balancer)."""
+        apps = self.spec.of_type('container_app')
+        if not apps:
+            return []
+        public = apps[0]['public_https']
+        out = []
+        for doc, svc in (('ecs_tasks_assume', 'ecs-tasks.amazonaws.com'), ('ecs_infra_assume', 'ecs.amazonaws.com')):
+            d = Hcl('data', 'aws_iam_policy_document', doc)
+            st = d.block('statement').set('actions', ['sts:AssumeRole'])
+            st.block('principals').set('type', 'Service').set('identifiers', [svc])
+            out.append(d)
+        out.append(Hcl('resource', 'aws_iam_role', 'infrastructure').set('name_prefix', prefix(f'{self.base}-infra', 38))
+                   .set('assume_role_policy', ref('data.aws_iam_policy_document.ecs_infra_assume.json')))
+        out.append(Hcl('resource', 'aws_iam_role_policy_attachment', 'infrastructure')
+                   .set('role', ref('aws_iam_role.infrastructure.name'))
+                   .set('policy_arn', 'arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices'))
+        out.append(Hcl('resource', 'aws_ecs_cluster', 'main').set('name', self.base))
+        for a in apps:
+            n = a['name']
+            out.append(Hcl('resource', 'aws_iam_role', f'{n}_task', comment=f'App {n}: its own identity (task role) and the role ECS uses to start it (execution role).')
+                       .set('name_prefix', prefix(f'{self.base}-{n}-task', 38))
+                       .set('assume_role_policy', ref('data.aws_iam_policy_document.ecs_tasks_assume.json')))
+            out.append(Hcl('resource', 'aws_iam_role', f'{n}_execution').set('name_prefix', prefix(f'{self.base}-{n}-exec', 38))
+                       .set('assume_role_policy', ref('data.aws_iam_policy_document.ecs_tasks_assume.json')))
+            out.append(Hcl('resource', 'aws_iam_role_policy_attachment', f'{n}_execution')
+                       .set('role', ref(f'aws_iam_role.{n}_execution.name'))
+                       .set('policy_arn', 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'))
+            out.append(Hcl('resource', 'aws_cloudwatch_log_group', n).set('name', f'/ecs/{self.base}/{n}')
+                       .set('retention_in_days', 30))
+            svc = Hcl('resource', 'aws_ecs_express_gateway_service', n).set('service_name', f'{self.base}-{n.replace("_", "-")}') \
+                .set('cluster', ref('aws_ecs_cluster.main.name')) \
+                .set('execution_role_arn', ref(f'aws_iam_role.{n}_execution.arn')) \
+                .set('infrastructure_role_arn', ref('aws_iam_role.infrastructure.arn')) \
+                .set('task_role_arn', ref(f'aws_iam_role.{n}_task.arn')) \
+                .set('cpu', str(int(a['cpu'] * 1024))).set('memory', str(int(a['memory_gb'] * 1024)))
+            c = svc.block('primary_container').set('image', self.placeholder_or_text(a['image'])).set('container_port', a['port'])
+            c.block('aws_logs_configuration').set('log_group', ref(f'aws_cloudwatch_log_group.{n}.name'))
+            for k, v in self.env_values(a).items():
+                c.block('environment').set('name', k).set('value', v)
+            for k, v in self.secret_values(a).items():
+                c.block('secret').set('name', k).set('value_from', v)
+            svc.note('Public subnets: internet-facing HTTPS load balancer, tasks get public IPs (inbound only from it).' if public
+                     else 'Private subnets: internal HTTPS load balancer, reachable only from inside the network.')
+            svc.block('network_configuration').set('subnets', ref(f'aws_subnet.{"public" if public else "private"}[*].id')) \
+                .set('security_groups', [ref(f'aws_security_group.{n}.id')])
+            svc.block('scaling_target').set('min_task_count', a['min_instances']).set('max_task_count', a['max_instances'])
+            deps = [ref(f'aws_iam_role_policy_attachment.{n}_execution'), ref('aws_iam_role_policy_attachment.infrastructure')]
+            if self.secret_values(a):
+                deps.insert(0, ref(f'aws_iam_role_policy.{n}_execution'))
+            svc.set('depends_on', deps)
+            out.append(svc)
+        if public:
+            self.warnings.append('The apps run in public subnets: ECS Express creates an internet-facing load balancer '
+                                 'only there. Their security group admits nothing directly; the database, storage and '
+                                 'secrets stay private.')
+        return out
+
+    def env_values(self, a: dict) -> dict:
+        """The app's own env, then what its access edges inject (names in the README)."""
+        return {**{k: self.placeholder_or_text(v) for k, v in a['env'].items()}, **self.edge_env(a)}
+
+    def edge_env(self, a: dict) -> dict:
+        """Plain environment variables the app's edges set: bucket name, database host, port and name."""
+        env = {}
+        for e in self.spec.edges_from(a['name']):
+            t, T = e['to'], e['to'].upper()
+            match e['type']:
+                case 'object_storage':
+                    env[f'{T}_BUCKET'] = ref(f'aws_s3_bucket.{t}.bucket')
+                case 'postgres':
+                    env[f'{T}_HOST'] = ref(f'aws_db_instance.{t}.address')
+                    env[f'{T}_PORT'] = '5432'
+                    env[f'{T}_NAME'] = t
+        return env
+
+    def secret_values(self, a: dict) -> dict:
+        """Variables ECS reads from Secrets Manager at start: each secret, and the database user and password
+        from the RDS-managed secret (JSON keys)."""
+        out = {}
+        for e in self.spec.edges_from(a['name']):
+            t, T = e['to'], e['to'].upper()
+            match e['type']:
+                case 'secret':
+                    out[T] = ref(f'aws_secretsmanager_secret.{t}.arn')
+                case 'postgres':
+                    arn = f'aws_db_instance.{t}.master_user_secret[0].secret_arn'
+                    out[f'{T}_USER'] = interp(f'${{{arn}}}:username::')
+                    out[f'{T}_PASSWORD'] = interp(f'${{{arn}}}:password::')
+        return out
+
+    def access(self) -> list[Hcl]:
+        """Least privilege per edge: task-role statements on each bucket, execution-role read of each secret, a
+        security-group rule app → database:5432."""
+        out = []
+        roles = self.catalog['roles']['aws']
+        for a in self.spec.of_type('container_app'):
+            n = a['name']
+            stores = self.spec.edges_from(n, 'object_storage')
+            if stores:
+                doc = Hcl('data', 'aws_iam_policy_document', f'{n}_task')
+                for e in stores:
+                    r = roles[f'object_storage.{e["level"]}']
+                    doc.block('statement').set('sid', f'{e["to"].replace("_", "").capitalize()}Objects') \
+                        .set('actions', r['objects']).set('resources', [interp(f'${{aws_s3_bucket.{e["to"]}.arn}}/*')])
+                    doc.block('statement').set('sid', f'{e["to"].replace("_", "").capitalize()}List') \
+                        .set('actions', r['bucket']).set('resources', [ref(f'aws_s3_bucket.{e["to"]}.arn')])
+                out.append(doc)
+                out.append(Hcl('resource', 'aws_iam_role_policy', f'{n}_task').set('role', ref(f'aws_iam_role.{n}_task.id'))
+                           .set('policy', ref(f'data.aws_iam_policy_document.{n}_task.json')))
+            arns = []
+            for e in self.spec.edges_from(n):
+                match e['type']:
+                    case 'secret':
+                        arns.append(ref(f'aws_secretsmanager_secret.{e["to"]}.arn'))
+                    case 'postgres':
+                        arns.append(ref(f'aws_db_instance.{e["to"]}.master_user_secret[0].secret_arn'))
+            if arns:
+                doc = Hcl('data', 'aws_iam_policy_document', f'{n}_execution', comment=f'ECS reads these secrets when it starts {n}.')
+                doc.block('statement').set('actions', roles['secret.read']['secret']).set('resources', arns)
+                out.append(doc)
+                out.append(Hcl('resource', 'aws_iam_role_policy', f'{n}_execution')
+                           .set('role', ref(f'aws_iam_role.{n}_execution.id'))
+                           .set('policy', ref(f'data.aws_iam_policy_document.{n}_execution.json')))
+            for e in self.spec.edges_from(n, 'postgres'):
+                out.append(Hcl('resource', 'aws_vpc_security_group_ingress_rule', f'{e["to"]}_from_{n}')
+                           .set('security_group_id', ref(f'aws_security_group.{e["to"]}.id'))
+                           .set('referenced_security_group_id', ref(f'aws_security_group.{n}.id'))
+                           .set('ip_protocol', 'tcp').set('from_port', 5432).set('to_port', 5432))
+        return out
+
+    def outputs(self) -> list[Hcl]:
+        """Addresses and names the user needs after apply; no output carries a secret value."""
+        out = []
+        for a in self.spec.of_type('container_app'):
+            out.append(Hcl('output', f'{a["name"]}_url').set('description', f'HTTPS address of {a["name"]} (ECS Express ingress paths).')
+                       .set('value', ref(f'aws_ecs_express_gateway_service.{a["name"]}.ingress_paths')))
+        for s in self.spec.of_type('object_storage'):
+            out.append(Hcl('output', f'{s["name"]}_bucket').set('value', ref(f'aws_s3_bucket.{s["name"]}.bucket')))
+        for d in self.spec.of_type('postgres'):
+            out.append(Hcl('output', f'{d["name"]}_endpoint').set('value', ref(f'aws_db_instance.{d["name"]}.address')))
+            out.append(Hcl('output', f'{d["name"]}_master_secret_arn')
+                       .set('description', 'Secrets Manager secret holding the database admin user and password (managed by RDS).')
+                       .set('value', ref(f'aws_db_instance.{d["name"]}.master_user_secret[0].secret_arn')))
+        for s in self.spec.of_type('secret'):
+            out.append(Hcl('output', f'{s["name"]}_arn').set('value', ref(f'aws_secretsmanager_secret.{s["name"]}.arn')))
+        return out
+
+    def destroy_line(self) -> str:
+        return ('`terraform destroy` is refused while a database has `deletion_protection = true`: set it to false and '
+                'apply first. A final snapshot is kept; secrets stay recoverable for 7 days.')
+
+    def login_lines(self) -> list[str]:
+        return ['- Terraform 1.11 or later (write-only secret arguments need it).',
+                '- AWS credentials for the target account: `aws configure` or `aws sso login` (or `AWS_PROFILE`).']
+
+    def summary_lines(self) -> list[str]:
+        s = self.spec
+        lines = [f'- Network {s.cidr}: 2 public + 2 private subnets over 2 availability zones, one NAT gateway.']
+        for a in s.of_type('container_app'):
+            lines.append(f'- `{a["name"]}`: ECS Express service ({a["cpu"]:g} vCPU, {a["memory_gb"]:g} GB, '
+                         f'{a["min_instances"]}–{a["max_instances"]} tasks, port {a["port"]}), '
+                         f'{"public" if a["public_https"] else "internal"} HTTPS address; the load balancer checks '
+                         f'GET / (it must answer 200); logs kept 30 days.')
+        for d in s.of_type('postgres'):
+            lines.append(f'- `{d["name"]}`: RDS PostgreSQL {d["version"]} ({self.catalog["sizes"][d["size"]]["aws"]}, '
+                         f'{d["storage_gb"]} GB gp3, encrypted, private, backups {d["backup_days"]} days'
+                         f'{", Multi-AZ" if d["high_availability"] else ""}, deletion protection on; admin password '
+                         f'managed by RDS in Secrets Manager).')
+        for o in s.of_type('object_storage'):
+            lines.append(f'- `{o["name"]}`: S3 bucket, all public access blocked, encrypted (KMS)'
+                         f'{", versioned" if o["versioning"] else ""}.')
+        for x in s.of_type('secret'):
+            lines.append(f'- `{x["name"]}`: Secrets Manager secret (value written once from `TF_VAR_{x["name"]}`, 7-day recovery window).')
+        return lines
+
+    def injected_env(self) -> dict[str, list[str]]:
+        return {a['name']: list(self.edge_env(a)) + list(self.secret_values(a)) for a in self.spec.of_type('container_app')
+                if self.edge_env(a) or self.secret_values(a)}
