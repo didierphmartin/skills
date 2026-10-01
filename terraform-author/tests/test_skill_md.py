@@ -37,6 +37,9 @@ class SkillMdTest(unittest.TestCase):
         for ref in refs:
             self.assertTrue((SKILL / ref).is_file(), ref)
 
+    def test_readme_opens_by_itself(self):
+        self.assertIn('The project README.md opens in the right pane by itself; the reply never repeats it.', self.body)
+
     def test_body_states_the_contract(self):
         for needle in ('never write HCL', 'NEED_TARGET', 'At most two revisions', '"script": "scripts/create.py"',
                        '"--cloud"', 'spec.json', '"left_out"', 'placeholder', 'No `read_outputs`'):

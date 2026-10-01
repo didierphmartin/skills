@@ -1514,6 +1514,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f'VALID — "{spec.title}" ({spec.name}) on {project.cloud_title} {spec.region}')
     print(f'project: {root}')
     print('wrote: ' + ', '.join(files))
+    # The runner shows files announced as "wrote /abs/path" in the right pane: the README opens by itself.
+    print(f'wrote {(root / "README.md").absolute()}')
     for n in spec.notes:
         print(f'note: {n}')
     if spec.placeholders:

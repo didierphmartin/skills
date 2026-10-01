@@ -1,4 +1,4 @@
-import tempfile, unittest
+import re, tempfile, unittest
 from pathlib import Path
 from helpers import fixture, minimal, run_cli
 
@@ -27,6 +27,22 @@ class ProjectTest(unittest.TestCase):
         self.assertTrue(any(l.startswith('left out: A custom domain') for l in lines))
         self.assertTrue(lines[-1].startswith('NEXT: your reply is exactly the lines of SKILL.md rule 7'))
         self.assertIn('.terraform/\n*.tfstate\n', (root / '.gitignore').read_text())
+
+    RUNNER = re.compile(r'\bwrote\s+(\/[^\s\'"]+\.[A-Za-z0-9]+)')   # the Pyodide runner's auto-surface regex
+
+    def announced(self, r):
+        return self.RUNNER.findall(r.stdout + '\n' + r.stderr)
+
+    def test_valid_announces_the_readme_for_the_right_pane(self):
+        r = run_cli(fixture('customer-portal.json'), self.out)
+        self.assertEqual(self.announced(r), [str(self.out / 'customer-portal-aws' / 'README.md')])
+
+    def test_invalid_and_need_target_announce_nothing(self):
+        r = run_cli(minimal(components=[{'type': 'vm', 'name': 'box'}, {'type': 'secret', 'name': 'k', 'size': 1}]), self.out)
+        self.assertEqual(self.announced(r), [])
+        raw = minimal()
+        del raw['target']
+        self.assertEqual(self.announced(run_cli(raw, self.out)), [])
 
     def test_invalid_writes_nothing(self):
         bad = minimal(components=[{'type': 'vm', 'name': 'box'}, {'type': 'secret', 'name': 'k', 'size': 1}])

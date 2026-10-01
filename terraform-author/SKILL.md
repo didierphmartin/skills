@@ -63,7 +63,7 @@ context-references: references/infra-spec.md, references/catalog.md
    Add `"--cloud", "<aws|azure>", "--region", "<region>"` to `argv` when the user gave them after the spec was
    written (or put them in the spec's `"target"`).
 5. Read the report: `VALID` (folder, `note:` when the region was mapped, placeholders, secrets, `warning:`, `left out:`, `NEXT:`), `INVALID` (rule 2)
-   or `NEED_TARGET` (rule 3).
+   or `NEED_TARGET` (rule 3). The project README.md opens in the right pane by itself; the reply never repeats it.
 6. Reply with rule 7's lines, filled in from the report.
 
 What the script checks, and so what `INVALID` means: every rule in `references/infra-spec.md` and `catalog.md`
