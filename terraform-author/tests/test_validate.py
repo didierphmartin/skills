@@ -1,5 +1,5 @@
 import unittest
-from helpers import errors_of, fixture, minimal, spec_of
+from helpers import CATALOG, errors_of, fixture, minimal, spec_of
 
 
 def app(name='web', **over):
@@ -156,6 +156,53 @@ class TargetRulesTest(unittest.TestCase):
         raw = with_app(app(public_https=True), app('admin', public_https=False))
         self.assertIn('on AWS all container apps of one project share public_https', errors_of(raw)[0])
         self.assertEqual(errors_of(raw, cloud='azure', region='westeurope'), [])
+
+
+class RobustnessTest(unittest.TestCase):
+    """Hostile JSON must produce error lines, never a traceback or a silently accepted value."""
+
+    def test_unhashable_values_are_errors(self):   # fix 1
+        self.assertTrue(errors_of(minimal(components=[{'type': ['x'], 'name': 'a'}])))
+        s = with_app(app(), {'type': 'object_storage', 'name': 'files'}, access=[{'from': ['web'], 'to': {'a': 1}}])
+        self.assertTrue(any(e.startswith('access[0]') for e in errors_of(s)))
+        self.assertTrue(errors_of(minimal(target={'cloud': ['aws'], 'region': 'eu-west-3'})))
+        self.assertTrue(errors_of(minimal(target={'cloud': 'aws', 'region': ['eu-west-3']})))
+        self.assertTrue(errors_of(minimal(target={'cloud': 'azure', 'region': {'a': 1}})))
+
+    def test_booleans_are_not_numbers(self):   # fix 2
+        self.assertTrue(any('cpu' in e for e in errors_of(with_app(app(cpu=True)))))
+        self.assertTrue(any('memory_gb' in e for e in errors_of(with_app(app(cpu=0.5, memory_gb=True)))))
+        self.assertTrue(any('memory_gb' in e for e in errors_of(with_app(app(memory_gb='1')))))
+
+    def test_trailing_newline_is_rejected(self):   # fix 3
+        self.assertTrue(errors_of(minimal(name='notes\n')))
+        self.assertTrue(errors_of(minimal(environment='prod\n')))
+        self.assertTrue(errors_of(minimal(components=[{'type': 'object_storage', 'name': 'files\n'}])))
+        self.assertTrue(errors_of(with_app(app(env={'FOO\n': 'x'}))))
+        self.assertTrue(errors_of(minimal(tags={'k\n': 'v'})))
+        s = minimal(components=[app(image={'placeholder': 'ph\n'})], placeholders={'ph\n': 'y'})
+        self.assertTrue(errors_of(s))
+
+    def test_blank_image_is_an_error(self):   # fix 4
+        for img in ('', '   '):
+            self.assertTrue(any(e.startswith('components.web.image') for e in errors_of(with_app(app(image=img)))), img)
+
+    def test_bad_cpu_skips_the_memory_rule(self):   # fix 5
+        errs = errors_of(with_app(app(cpu=3, memory_gb=6)))
+        self.assertEqual([e for e in errs if 'memory_gb' in e], [], errs)
+        self.assertTrue(any('cpu' in e for e in errs))
+        self.assertIsNone(spec_of(with_app(app(cpu=3))).components['web']['memory_gb'])
+
+    def test_non_object_spec_has_its_attributes(self):   # fix 6
+        s = spec_of([])
+        self.assertTrue(s.errors)
+        self.assertEqual((s.name, s.cloud, s.region), (None, None, None))
+
+    def test_defaults_are_copies(self):   # fix 7
+        a = spec_of(with_app(app())).components['web']['env']
+        a['X'] = 'y'
+        self.assertEqual(spec_of(with_app(app())).components['web']['env'], {})
+        self.assertEqual(CATALOG['components']['container_app']['options']['env']['default'], {})
 
 
 if __name__ == '__main__':

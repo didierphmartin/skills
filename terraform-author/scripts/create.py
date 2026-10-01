@@ -71,6 +71,11 @@ class Spec:
         self.placeholders: dict[str, str] = {}
         self.used_placeholders: set[str] = set()
         self.left_out: list[str] = []
+        # set before the early return so a caller can read them even when the spec is not an object
+        self.raw = raw
+        self.name = self.title = self.cloud = self.region = self.cidr = None
+        self.environment = 'prod'
+        self.tags: dict = {}
         if not isinstance(raw, dict):
             self.errors.append('spec: must be a JSON object (references/infra-spec.md)')
             return
@@ -88,20 +93,20 @@ class Spec:
         for k in sorted(set(raw) - TOP_KEYS):
             self.err(k, f'unknown key; allowed: {", ".join(sorted(TOP_KEYS))}')
         self.name = raw.get('name')
-        if not isinstance(self.name, str) or not NAME_RE.match(self.name):
+        if not isinstance(self.name, str) or not NAME_RE.fullmatch(self.name):
             self.err('name', 'must be a lowercase slug of 3–24 letters, digits and single hyphens (e.g. "customer-portal")')
         self.title = raw.get('title')
         if not isinstance(self.title, str) or not self.title.strip():
             self.err('title', 'must be a non-empty string (the application, in the user\'s words)')
         self.environment = raw.get('environment', 'prod')
-        if not isinstance(self.environment, str) or not ENV_RE.match(self.environment):
+        if not isinstance(self.environment, str) or not ENV_RE.fullmatch(self.environment):
             self.err('environment', 'must be 2–10 lowercase letters or digits, starting with a letter (e.g. "prod", "dev")')
         self.tags = raw.get('tags', {})
         if not isinstance(self.tags, dict):
             self.err('tags', 'must be an object of tag name → text')
             self.tags = {}
         for k, v in self.tags.items():
-            if not TAG_KEY_RE.match(k) or not isinstance(v, str) or len(v) > 256:
+            if not TAG_KEY_RE.fullmatch(k) or not isinstance(v, str) or len(v) > 256:
                 self.err(f'tags.{k}', 'tag names are letters, digits, "_", "." or "-" (≤ 63) and values text (≤ 256)')
         net = raw.get('network', {})
         self.cidr = None
@@ -142,15 +147,15 @@ class Spec:
                 self.err(where, 'must be an object with "type" and "name"')
                 continue
             ctype, name = c.get('type'), c.get('name')
-            if ctype in self.catalog['out_of_v1']:
+            if isinstance(ctype, str) and ctype in self.catalog['out_of_v1']:
                 self.err(where, f'type "{ctype}" is out of v1 — remove it, add "{ctype}" to "left_out" and tell the '
                                 f'user: {self.catalog["out_of_v1"][ctype]}')
                 continue
-            if ctype not in kinds:
-                self.err(where, f'unknown type "{ctype}"; v1 types: {", ".join(kinds)}; out of v1 (put in '
+            if not isinstance(ctype, str) or ctype not in kinds:
+                self.err(where, f'unknown type {json.dumps(ctype)}; v1 types: {", ".join(kinds)}; out of v1 (put in '
                                 f'"left_out"): {", ".join(self.catalog["out_of_v1"])}')
                 continue
-            if not isinstance(name, str) or not COMP_RE.match(name):
+            if not isinstance(name, str) or not COMP_RE.fullmatch(name):
                 self.err(where, 'name must be a lowercase slug of 1–20 letters, digits and single "_" (e.g. "web", "uploads")')
                 continue
             where = f'components.{name}'
@@ -181,12 +186,12 @@ class Spec:
             self.err(f'{where}.{k}', f'unknown option for {ctype}; allowed: {", ".join(opts) or "none"}')
         out = {'type': ctype, 'name': c['name']}
         for k, o in opts.items():
-            out[k] = c.get(k, o.get('default'))
+            out[k] = c[k] if k in c else copy.deepcopy(o.get('default'))
         for k, o in opts.items():
             v = out[k]
             if isinstance(o.get('default'), bool) and not isinstance(v, bool):
                 self.err(f'{where}.{k}', 'must be true or false')
-            elif 'values' in o and v not in o['values']:
+            elif 'values' in o and (isinstance(v, bool) or v not in o['values']):   # True == 1 in Python
                 self.err(f'{where}.{k}', f'must be one of {", ".join(map(str, o["values"]))}')
             elif 'min' in o and (not isinstance(v, int) or isinstance(v, bool) or not o['min'] <= v <= o['max']):
                 self.err(f'{where}.{k}', f'must be a whole number from {o["min"]} to {o["max"]}')
@@ -207,14 +212,21 @@ class Spec:
         mem = c.pop('memory_gb', None)   # checked here against cpu, not by _options
         out = self._options(c, where, 'container_app')
         cpu = out['cpu']
-        if cpu not in self.catalog['components']['container_app']['options']['cpu']['values']:
-            cpu = 0.5   # already reported by _options; keeps the memory check meaningful
-        out['memory_gb'] = cpu * 2 if mem is None else mem
-        if out['memory_gb'] != cpu * 2:
+        cpu_ok = not isinstance(cpu, bool) and cpu in self.catalog['components']['container_app']['options']['cpu']['values']
+        if mem is not None and (isinstance(mem, bool) or not isinstance(mem, (int, float))):
+            self.err(f'{where}.memory_gb', 'must be a number: 2 × cpu')
+            out['memory_gb'] = None
+        elif not cpu_ok:
+            out['memory_gb'] = None   # the cpu error is already reported; no 2 × cpu check against a wrong cpu
+        else:
+            out['memory_gb'] = cpu * 2 if mem is None else mem
+        if cpu_ok and out['memory_gb'] is not None and out['memory_gb'] != cpu * 2:
             self.err(f'{where}.memory_gb', f'must be 2 × cpu ({cpu * 2:g} for cpu {cpu:g}): the sizes both clouds accept '
                                            f'are 0.25/0.5, 0.5/1, 1/2, 2/4, 4/8 (cpu/memory_gb)')
         if out['image'] is None:
             self.err(f'{where}.image', 'required: the image the user gave, or {"placeholder": "<name>"} — never an invented image')
+        elif isinstance(out['image'], str) and not out['image'].strip():
+            self.err(f'{where}.image', 'must not be empty: the image the user gave, or {"placeholder": "<name>"}')
         else:
             self._value(out['image'], f'{where}.image')
         if isinstance(out['min_instances'], int) and isinstance(out['max_instances'], int) \
@@ -225,7 +237,7 @@ class Spec:
             self.err(f'{where}.env', 'must be an object of NAME → text or {"placeholder": "<name>"}')
             out['env'] = {}
         for k, v in out['env'].items():
-            if not ENV_VAR_RE.match(k):
+            if not ENV_VAR_RE.fullmatch(k):
                 self.err(f'{where}.env.{k}', 'environment variable names are UPPER_CASE letters, digits and "_"')
             self._value(v, f'{where}.env.{k}')
         return out
@@ -241,12 +253,14 @@ class Spec:
             if not isinstance(e, dict) or set(e) - {'from', 'to', 'level'}:
                 self.err(where, 'must be {"from": <container_app>, "to": <component>, "level": …}')
                 continue
-            src, dst = self.components.get(e.get('from')), self.components.get(e.get('to'))
+            # a JSON list or object is unhashable: look names up only when they are text
+            src = self.components.get(e['from']) if isinstance(e.get('from'), str) else None
+            dst = self.components.get(e['to']) if isinstance(e.get('to'), str) else None
             if src is None or src['type'] != 'container_app':
-                self.err(where, f'from "{e.get("from")}" must be the name of a container_app in components')
+                self.err(where, f'from {json.dumps(e.get("from"))} must be the name of a container_app in components')
                 continue
             if dst is None:
-                self.err(where, f'to "{e.get("to")}" is not a component name')
+                self.err(where, f'to {json.dumps(e.get("to"))} is not a component name')
                 continue
             if dst['type'] == 'container_app':
                 self.err(where, 'apps reach each other over their HTTPS address; an access edge goes to postgres, '
@@ -275,7 +289,7 @@ class Spec:
         for n in sorted(secrets & TF_RESERVED_VARS):
             self.err(f'components.{n}', 'Terraform reserves this name for itself; rename the secret')
         for n, d in phs.items():
-            if not PH_RE.match(n) or n in TF_RESERVED_VARS:
+            if not PH_RE.fullmatch(n) or n in TF_RESERVED_VARS:
                 self.err(f'placeholders.{n}', 'names are lowercase letters, digits and "_" (2–41), not a name '
                                               f'Terraform reserves ({", ".join(sorted(TF_RESERVED_VARS))})')
             elif n in secrets:
@@ -301,6 +315,15 @@ class Spec:
         self.cloud = cloud or old_cloud
         self.region = region or (old_region if self.cloud == old_cloud else None)
         clouds = self.catalog['clouds']
+        # JSON lists/objects are unhashable: refuse anything that is not text before any lookup
+        if self.cloud is not None and not isinstance(self.cloud, str):
+            self.err('target.cloud', f'must be text: one of {", ".join(clouds)}')
+            self.cloud = None
+            return
+        if self.region is not None and not isinstance(self.region, str):
+            self.err('target.region', 'must be text: a region name (references/catalog.md → Regions)')
+            self.region = None
+            return
         if self.cloud is not None and self.cloud not in clouds:
             self.err('target.cloud', f'"{self.cloud}" is not a v1 target; v1 targets: {", ".join(clouds)}')
             self.cloud = None
