@@ -1,0 +1,27 @@
+{
+  "name": "internal-tools",
+  "title": "Internal tools",
+  "environment": "dev",
+  "target": {"cloud": "azure", "region": "westus"},
+  "tags": {"owner": "it-ops", "cost-center": "cc-1234"},
+  "network": {"cidr": "10.20.0.0/20"},
+  "components": [
+    {"type": "container_app", "name": "admin_ui", "image": "ghcr.io/example/admin-ui:1.4.2", "port": 3000,
+     "cpu": 1, "min_instances": 1, "max_instances": 2},
+    {"type": "container_app", "name": "worker", "image": {"placeholder": "worker_image"}, "cpu": 0.25,
+     "env": {"QUEUE_MODE": "batch", "LICENSE_SERVER": {"placeholder": "license_server_url"}}},
+    {"type": "postgres", "name": "tools_db", "version": "16", "size": "medium", "storage_gb": 128,
+     "backup_days": 14, "high_availability": true},
+    {"type": "object_storage", "name": "exports", "versioning": false}
+  ],
+  "access": [
+    {"from": "admin_ui", "to": "tools_db"},
+    {"from": "worker", "to": "tools_db"},
+    {"from": "admin_ui", "to": "exports", "level": "read"},
+    {"from": "worker", "to": "exports", "level": "readwrite"}
+  ],
+  "placeholders": {
+    "worker_image": "The worker's container image (registry/name:tag).",
+    "license_server_url": "URL of the license server the worker calls."
+  }
+}

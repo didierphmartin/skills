@@ -1,0 +1,73 @@
+{
+  "name": "customer-portal",
+  "title": "Portail client",
+  "environment": "prod",
+  "target": {
+    "cloud": "aws",
+    "region": "eu-west-3"
+  },
+  "tags": {
+    "project": "customer-portal",
+    "env": "prod"
+  },
+  "network": {
+    "cidr": "10.0.0.0/16"
+  },
+  "components": [
+    {
+      "type": "container_app",
+      "name": "web",
+      "image": {
+        "placeholder": "container_image"
+      },
+      "port": 8080,
+      "cpu": 0.5,
+      "memory_gb": 1,
+      "min_instances": 2,
+      "max_instances": 4,
+      "public_https": true,
+      "env": {
+        "APP_MODE": "production"
+      }
+    },
+    {
+      "type": "postgres",
+      "name": "db",
+      "version": "17",
+      "size": "small",
+      "storage_gb": 32,
+      "backup_days": 7
+    },
+    {
+      "type": "object_storage",
+      "name": "uploads",
+      "versioning": true
+    },
+    {
+      "type": "secret",
+      "name": "payment_api_key"
+    }
+  ],
+  "access": [
+    {
+      "from": "web",
+      "to": "uploads",
+      "level": "readwrite"
+    },
+    {
+      "from": "web",
+      "to": "payment_api_key",
+      "level": "read"
+    },
+    {
+      "from": "web",
+      "to": "db"
+    }
+  ],
+  "placeholders": {
+    "container_image": "L'image de conteneur de l'application (registre/nom:tag)."
+  },
+  "left_out": [
+    "custom_domain"
+  ]
+}
