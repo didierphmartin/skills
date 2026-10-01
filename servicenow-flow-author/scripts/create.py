@@ -12,7 +12,7 @@ Exit 2  the spec file cannot be read as JSON.
 Standard library only: it runs in the app's browser Pyodide.
 """
 from __future__ import annotations
-import argparse, datetime, json, re, sys, uuid, zipfile
+import argparse, datetime, html, json, re, sys, uuid, zipfile
 from pathlib import Path
 
 SDK_VERSION = '4.13.3'
@@ -46,6 +46,7 @@ PILL_OF_KIND = {'string': 'string', 'reference': 'reference', 'list': 'array.str
                 'datetime': 'glide_date_time', 'boolean': 'boolean', 'integer': 'integer'}
 QUERY_SEP_RE = re.compile(r'\^(?:OR|NQ|AND)?')
 QUERY_FIELD_RE = re.compile(r'^([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)(?=!=|<=|>=|=|<|>|ISEMPTY|ISNOTEMPTY|IN|NOT IN|STARTSWITH|ENDSWITH|LIKE|NOT LIKE)')
+QUERY_OP_RE = re.compile(r'^(?:\^|!=|<=|>=|=|<|>|ISEMPTY|ISNOTEMPTY|NOT IN|IN|STARTSWITH|ENDSWITH|NOT LIKE|LIKE)')
 
 
 # ------------------------------------------------------------------ vocabulary
@@ -294,6 +295,23 @@ def scalar_node(ctx: Ctx, value, where: str, allow_text: bool, allow_pill: bool 
     return None
 
 
+def check_operators(ctx: Ctx, node, where: str):
+    """Encoded-query operators only (wfa-flow-logic-api.md:586-621): no CONTAINS, and the text after a pill starts
+    with an operator or a ^ separator."""
+    parts = [node] if node and node[0] == 'str' else node[1] if node and node[0] == 'tpl' else []
+    after_pill = False
+    for p in parts:
+        if p[0] in ('str', 'text'):
+            if 'CONTAINS' in p[1]:
+                ctx.err(where, '"CONTAINS" is not an encoded-query operator — "contains" is LIKE, e.g. "LIKEvpn" '
+                               '(wfa-flow-logic-api.md:621)')
+            elif after_pill and not QUERY_OP_RE.match(p[1]):
+                ctx.err(where, f'the text "{p[1][:30]}" after a pill does not start with an operator: =, !=, <, <=, >, >=, '
+                               'ISEMPTY, ISNOTEMPTY, IN, NOT IN, STARTSWITH, ENDSWITH, LIKE (wfa-flow-logic-api.md:586-621)')
+        after_pill = p[0] == 'pill'
+    return node
+
+
 def check_query(ctx: Ctx, node, table: str | None, where: str):
     """Check the field names at the start of each encoded-query term (string parts only)."""
     if node is None or table is None:
@@ -412,7 +430,7 @@ def input_node(ctx: Ctx, action: str, spec_in: dict, name: str, value, step_inpu
         ctx.err(where, 'approval_reason is at most 160 characters (action-api.md:492)')
     if name == 'conditions':
         table = step_inputs.get('table') or step_inputs.get('table_name')
-        node = check_query(ctx, node, table if table in ctx.tables else None, where)
+        node = check_query(ctx, check_operators(ctx, node, where), table if table in ctx.tables else None, where)
     return node
 
 
@@ -492,7 +510,7 @@ def step_ir(ctx: Ctx, st, where: str):
     ir = {'kind': kind, 'id': sid, 'key': step_key(ctx, sid or 'x'), 'label': st.get('label', '')}
     match kind:
         case 'if':
-            ir['cond'] = scalar_node(ctx, st.get('condition'), where + '.condition', True)
+            ir['cond'] = check_operators(ctx, scalar_node(ctx, st.get('condition'), where + '.condition', True), where + '.condition')
             ir['body'] = body(ctx, st.get('steps'), where + '.steps')
             ir['elifs'] = []
             for k, e in enumerate(st.get('else_if') or []):
@@ -500,7 +518,7 @@ def step_ir(ctx: Ctx, st, where: str):
                 eid = check_id(ctx, e, w) if isinstance(e, dict) else None
                 if eid:
                     ir['elifs'].append({'id': eid, 'key': step_key(ctx, eid), 'label': e.get('label', ''),
-                                        'cond': scalar_node(ctx, e.get('condition'), w + '.condition', True),
+                                        'cond': check_operators(ctx, scalar_node(ctx, e.get('condition'), w + '.condition', True), w + '.condition'),
                                         'body': body(ctx, e.get('steps'), w + '.steps')})
             if st.get('else') is not None:
                 e, w = st['else'], where + '.else'
@@ -553,7 +571,7 @@ def step_ir(ctx: Ctx, st, where: str):
                 ctx.err(where, 'needs a non-empty "steps" list')
                 steps = []
             ir['body'] = [s for s in (step_ir(ctx, x, f'{where}.steps[{k}]') for k, x in enumerate(steps)) if s is not None]
-            ir['until'] = scalar_node(ctx, st.get('until'), where + '.until', True)   # may read the body (wfa-flow-logic-api.md:409)
+            ir['until'] = check_operators(ctx, scalar_node(ctx, st.get('until'), where + '.until', True), where + '.until')   # may read the body (wfa-flow-logic-api.md:409)
             ctx.frames.pop()
         case 'wait_duration':
             ir['duration'] = duration_node(ctx, st.get('duration'), where + '.duration')
@@ -867,7 +885,7 @@ def trigger_ir(ctx: Ctx, t) -> dict | None:
             case 'string' | 'datetime' if isinstance(v, str):
                 node = ('str', v)
                 if k == 'condition':
-                    node = check_query(ctx, node, ctx.trigger_table, w)
+                    node = check_query(ctx, check_operators(ctx, node, w), ctx.trigger_table, w)
                 nodes.append((k, node))
             case _:
                 ctx.err(w, f'input "{k}" ({i["type"]}) is not supported by this skill — leave it out')
@@ -890,7 +908,9 @@ def check_spec(spec, vocab: dict) -> tuple[list[str], dict | None]:
     for k in ('title', 'description', 'language'):
         if k in spec and (not isinstance(spec[k], str) or not spec[k].strip()):
             ctx.err(k, 'must be a non-empty string')
-    for k in sorted(set(spec) - {'name', 'title', 'description', 'language', 'trigger', 'steps', 'placeholders', 'form'}):
+    # _generated_on is written by Project.write() into flow-specs/, so a stored spec can be run again as-is
+    for k in sorted(set(spec) - {'name', 'title', 'description', 'language', 'trigger', 'steps', 'placeholders', 'form',
+                                 '_generated_on'}):
         msg = ' — a value a person supplies is a variable of the "form" or of an ask step' if k == 'new_fields' else ''
         ctx.err('spec', f'unknown key "{k}"{msg}')
     if not isinstance(spec.get('placeholders') or {}, dict):
@@ -1258,6 +1278,124 @@ def render_flow(ir: dict) -> str:
     return '\n'.join(lines)
 
 
+# ------------------------------------------------------------------ rendering (forms preview)
+PREVIEW_CSS = """
+:root { color-scheme: light; }
+body { margin: 0; background: #f4f5f7; color: #1f2329; font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 4px 0 2px; }
+.note { color: #5b6370; font-size: 12px; margin: 0 0 16px; }
+section { background: #fff; border: 1px solid #d9dde3; border-radius: 6px; padding: 16px 20px; margin-bottom: 16px; }
+h2 { font-size: 16px; margin: 0 0 2px; }
+.who { color: #5b6370; font-size: 12px; margin: 0 0 14px; }
+.field { margin-bottom: 14px; }
+.field > label.q { display: block; font-weight: 600; margin-bottom: 4px; }
+.req { color: #c62828; margin-right: 3px; }
+input[type=text], input[type=email], input[type=url], input[type=date], input[type=datetime-local], select, textarea {
+  box-sizing: border-box; width: 60%; padding: 6px 8px; border: 1px solid #b9bfc8; border-radius: 4px; font: inherit; background: #fff; }
+.wide input, .wide textarea { width: 100%; }
+.choice { display: block; margin: 2px 0; font-weight: normal; }
+.help { color: #5b6370; font-size: 12px; margin-top: 3px; }
+.empty { color: #5b6370; font-style: italic; }
+"""
+PREVIEW_INPUT = {'date': 'date', 'date_time': 'datetime-local', 'email': 'email', 'url': 'url'}
+
+
+def iter_ir(steps):
+    """Every step IR, nested ones included, in flow order (the IR twin of iter_steps)."""
+    for st in steps or []:
+        yield st
+        for k in ('body', 'try', 'catch'):
+            yield from iter_ir(st.get(k))
+        for b in st.get('branches') or []:
+            yield from iter_ir(b)
+        for e in list(st.get('elifs') or []) + ([st['else']] if st.get('else') else []):
+            yield from iter_ir(e.get('body'))
+
+
+def preview_field(v: dict) -> str:
+    """One variable as the catalog form shows it. Reference-like types pick instance records, so they are a text box
+    naming the table (the preview has no instance data)."""
+    e = html.escape
+    name = e(v['name'])
+    kind, data = v['extra'][1] if v['extra'] else (None, None)
+    star = '<span class="req" title="mandatory">*</span>' if v['mandatory'] else ''
+    question = f'<label class="q" for="{name}">{star}{e(v["label"])}</label>'
+    wide = ''
+    match v['type']:
+        case 'checkbox':
+            question = ''
+            control = f'<label class="choice"><input type="checkbox" id="{name}"> {e(v["label"])}</label>'
+        case 'multi_line_text':
+            wide, control = ' wide', f'<textarea id="{name}" rows="3"></textarea>'
+        case 'select_box' | 'yes_no':
+            options = data if v['type'] == 'select_box' else [('yes', 'Yes'), ('no', 'No')]
+            control = (f'<select id="{name}"><option>-- None --</option>'
+                       + ''.join(f'<option value="{e(k)}">{e(t)}</option>' for k, t in options) + '</select>')
+        case 'multiple_choice':
+            control = ''.join(f'<label class="choice"><input type="radio" name="{name}" value="{e(k)}"> {e(t)}</label>'
+                              for k, t in data)
+        case 'reference' | 'requested_for' | 'list_collector':
+            table = 'sys_user' if v['type'] == 'requested_for' else data
+            what = 'several records' if v['type'] == 'list_collector' else 'a record'
+            control = f'<input type="text" id="{name}" placeholder="Pick {what} from {e(table)} (instance data)">'
+        case 'date' | 'date_time' | 'email' | 'url':
+            control = f'<input type="{PREVIEW_INPUT[v["type"]]}" id="{name}">'
+        case 'single_line_text' | 'ip_address':
+            control = f'<input type="text" id="{name}">'
+        case 'wide_single_line_text':
+            wide, control = ' wide', f'<input type="text" id="{name}">'
+        case other:
+            raise ValueError(f'no preview control for variable type {other!r}: add one to preview_field')
+    help_ = f'<div class="help">{e(v["help"])}</div>' if v['help'] else ''
+    return f'<div class="field{wide}" data-var="{name}">{question}{control}{help_}</div>'
+
+
+def preview_who(st: dict) -> str:
+    """Who answers an ask step: a placeholder's name (or its filled value), or a value the flow sets at run time."""
+    parts = []
+    for key, node in st['fields'][1]:
+        role = 'group' if key == 'assignment_group' else 'user'
+        match node:
+            case ('ph', name, None):
+                parts.append(f'{role} {name} (placeholder)')
+            case ('ph', _, value):
+                parts.append(f'{role} {value}')
+            case _:
+                parts.append(f'{role} set by the flow at run time')
+    return ', '.join(parts)
+
+
+def preview_section(title: str, who: str, variables: list[dict]) -> str:
+    e = html.escape
+    fields = ''.join(preview_field(v) for v in sorted(variables, key=lambda v: v['order'])) \
+        or '<p class="empty">No fields.</p>'
+    return f'<section><h2>{e(title)}</h2><p class="who">{e(who)}</p>{fields}</section>'
+
+
+def render_preview(ir: dict) -> str:
+    """previews/<name>.html: the order form, then one catalog-task form per ask step, in flow order.
+
+    Why plain HTML+CSS: SynergyAI shows it in an <iframe sandbox=""> (no scripts). Every spec text is escaped.
+    """
+    e = html.escape
+    by_owner: dict[str, list[dict]] = {}
+    for v in ir['variables']:
+        by_owner.setdefault(v['owner'], []).append(v)
+    sections = [preview_section('Order form', f"Submitted by: {ir['form']['submitted_by']}", by_owner.get('form', []))]
+    for st in iter_ir(ir['steps']):
+        if st['kind'] == 'ask':
+            sections.append(preview_section(f"Catalog task — {st['short'][1]}", f'Answered by: {preview_who(st)}',
+                                            by_owner.get(st['id'], [])))
+    return ('<!doctype html>\n<html><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>{e(ir["title"])}: forms</title><style>{PREVIEW_CSS}</style></head><body><main>'
+            f'<h1>{e(ir["title"])}</h1>'
+            '<p class="note">Preview of the catalog forms, not connected to ServiceNow: fields that pick records '
+            'show the table they read from.</p>'
+            + ''.join(sections) + '</main></body></html>\n')
+
+
 # ------------------------------------------------------------------ project
 # One shared app per vendor (spec decision 2) under <out>/x_<vendor>_synergy/. The user builds and installs from
 # ~/Documents/synergyAI/ServiceNow/x_<vendor>_synergy/ with build-install.sh (decision 7): npm install puts ~380 MB in
@@ -1418,6 +1556,8 @@ echo "Installed from $build"
                           f"- Catalog item listed in: catalog {self.listed_in(s, form, 'catalog')} / "
                           f"category {self.listed_in(s, form, 'category')}",
                           '- Order form: ' + ', '.join(f"{v['label']} (`{v['name']}`, {v['type']})" for v in form['variables'])]
+                if (self.root / 'previews' / f'{name}.html').is_file():   # flows written before previews have none
+                    lines.append(f'- Form preview: `previews/{name}.html` (open it in a browser)')
                 if asked:
                     lines.append('- Asked during the run (catalog tasks): '
                                  + ', '.join(f"{v['label']} (`{v['name']}`, step `{sid}`)" for sid, v in asked))
@@ -1469,6 +1609,10 @@ echo "Installed from $build"
         stored = dict(spec, _generated_on=today)
         self.put(f'flow-specs/{ir["name"]}.json', json.dumps(stored, indent=2, ensure_ascii=False) + '\n')
         self.put(f'src/fluent/flows/{ir["name"]}.now.ts', render_flow(ir))
+        if ir['form']:
+            self.put(f'previews/{ir["name"]}.html', render_preview(ir))
+        else:   # the same flow may have been a catalog flow before: its old forms would mislead
+            (self.root / 'previews' / f'{ir["name"]}.html').unlink(missing_ok=True)
         self.put('FLOWS.md', self.flows_md())
         (self.out / '.vendor').write_text(self.vendor + '\n', encoding='utf-8')
         return first, self.zip()
@@ -1515,6 +1659,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"VALID — flow \"{ir['title']}\" ({ir['name']})")
     print(f"project: {proj} ({'created' if first else 'existing'}; {flows} flow{'s' if flows != 1 else ''})")
     print('wrote:\n' + '\n'.join(f'  {w}' for w in written))
+    if ir['form']:   # the Pyodide worker shows files announced as "wrote /abs/path" in SynergyAI's right pane
+        print(f"preview: wrote {(proj / 'previews' / (ir['name'] + '.html')).absolute()}")
     print(f'zip: {zpath}')
     phs = ir['placeholders']
     if phs:

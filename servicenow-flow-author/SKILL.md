@@ -61,6 +61,8 @@ context-references: references/flow-spec.md, references/fluent-vocabulary.md
    ```
    Add `"--vendor", "<code>"` to `argv` only after the user gave the company code.
 5. Read the report: `VALID` (placeholders listed, `NEXT:` line), `INVALID` (rule 2) or `NEED_VENDOR` (rule 3).
+   A VALID catalog flow also writes `previews/<name>.html`, which SynergyAI shows in the right pane by itself:
+   never read it back or paste it.
 6. Reply with rule 6's lines, filled in from the report. When the user later gives placeholder values, put them in `placeholders.<name>.value` and run
    the same spec again (same `name`): the flow is rewritten with the values and `FLOWS.md` marks them filled.
 
@@ -74,6 +76,8 @@ context-references: references/flow-spec.md, references/fluent-vocabulary.md
 | "decide", "depending on the answer" | `if` with one `else_if` per answer and an `else` |
 | "wait until the task/record is done" | the action `waitForCondition` on that record |
 | "ask X for …", "X confirms …" (data mid-run) | an ask step assigned to X; branch on `<ask>.catalog_task.state` (3 = closed complete) when the procedure says what happens otherwise |
+| "pick any of: VPN, Git, Jira…" (several answers from a fixed list) | one `checkbox` variable per option, each branched with `[{"pill": "form.<option>"}, "=true"]` — `select_box`/`multiple_choice` take one answer only |
+| "if the answer contains …" | `LIKE` (`[{"pill": …}, "LIKEvpn"]`) — `CONTAINS` is not an operator |
 | a list of items ("laptop, monitor, phone") | a `list_collector` variable on the item table (e.g. `cmdb_model`); `lookUpRecords` with `["sys_idIN", {"pill": "form.<variable>"}]`, then `for_each` over its `Records` |
 | an email that must show a variable in its body | `sendNotification` with a notification placeholder on `sc_req_item` (a `sendEmail` body takes no pills; only its `ah_subject` and `ah_to` do) |
 | "raise the event …" | `fireEvent` with `event_name` a placeholder (kind `text`, the registered event) |

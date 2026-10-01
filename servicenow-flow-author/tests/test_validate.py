@@ -80,6 +80,24 @@ class ValidateTest(unittest.TestCase):
         s = minimal(trigger={'type': 'record_created', 'table': 'incident', 'condition': 'u_region=emea'})
         one(errors_of(s), 'condition field "u_region" is not on table incident')
 
+    def test_contains_is_not_an_operator(self):
+        s = catalog_min()
+        s['steps'] = [{'id': 'has_vpn', 'label': 'VPN?', 'logic': 'if',
+                       'condition': [{'pill': 'form.' + s['form']['variables'][0]['name']}, 'CONTAINSvpn'],
+                       'steps': s['steps']}]
+        one(errors_of(s), 'CONTAINS', 'LIKE')
+        s['steps'][0]['condition'][1] = 'LIKEvpn'
+        self.assertEqual(errors_of(s), [])
+        s = minimal(trigger={'type': 'record_created', 'table': 'incident', 'condition': 'short_descriptionCONTAINSvpn'})
+        one(errors_of(s), 'CONTAINS', 'LIKE')
+
+    def test_text_after_a_pill_starts_with_an_operator(self):
+        s = catalog_min()
+        s['steps'] = [{'id': 'has_vpn', 'label': 'VPN?', 'logic': 'if',
+                       'condition': [{'pill': 'form.' + s['form']['variables'][0]['name']}, ' equals vpn'],
+                       'steps': s['steps']}]
+        one(errors_of(s), 'does not start with an operator')
+
     def test_unknown_instance_record_must_be_a_placeholder(self):   # Review Focus 3
         s = fixture('onboarding-en.json')
         s['steps'][1]['steps'][0]['inputs']['notification'] = {'placeholder': 'hr_notice'}

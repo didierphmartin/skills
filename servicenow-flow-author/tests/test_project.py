@@ -1,7 +1,7 @@
 """Project writer + CLI: first use vs add flow, FLOWS.md, the zip and the remembered vendor code."""
-import json, os, subprocess, tempfile, unittest, zipfile
+import json, os, re, subprocess, tempfile, unittest, zipfile
 from pathlib import Path
-from helpers import fixture, minimal, run_cli
+from helpers import catalog_min, fixture, minimal, run_cli
 
 SCOPE = 'x_1234567_synergy'
 
@@ -139,6 +139,42 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(flows.count('## Log every new incident\n'), 1, flows)
         self.assertNotIn('## Log new incident\n', flows)
         self.assertEqual(flows.count('`src/fluent/flows/log-new-incident.now.ts`'), 1, flows)
+
+    def test_stored_spec_runs_again_as_is(self):
+        run_cli(minimal(), self.out, '--vendor', '1234567')
+        stored = json.loads((self.proj / 'flow-specs/log-new-incident.json').read_text())
+        self.assertIn('_generated_on', stored)
+        r = run_cli(stored, self.out)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn('(existing; 1 flow)', r.stdout)
+
+    WORKER_WROTE_RE = re.compile(r"\bwrote\s+(/[^\s'\"]+\.[A-Za-z0-9]+)")   # pyodide.worker.js:458
+
+    def test_catalog_flow_writes_its_preview_and_announces_it(self):
+        r = run_cli(fixture('all-constructs.json'), self.out, '--vendor', '1234567')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        page = self.proj / 'previews/all-constructs.html'
+        self.assertTrue(page.is_file())
+        self.assertIn('Review the incident and record the outcome', page.read_text())
+        announced = [m.group(1) for m in self.WORKER_WROTE_RE.finditer(r.stdout)]
+        self.assertEqual(announced, [str(page.absolute())])
+        self.assertIn('`previews/all-constructs.html`', (self.proj / 'FLOWS.md').read_text())
+
+    def test_flows_md_lists_only_previews_that_exist(self):   # flows written before previews have none
+        run_cli(catalog_min(name='badge-check'), self.out, '--vendor', '1234567')
+        (self.proj / 'previews/badge-check.html').unlink()
+        run_cli(fixture('all-constructs.json'), self.out)
+        flows = (self.proj / 'FLOWS.md').read_text()
+        self.assertNotIn('`previews/badge-check.html`', flows)
+        self.assertIn('`previews/all-constructs.html`', flows)
+
+    def test_record_flow_has_no_preview_and_drops_a_stale_one(self):
+        run_cli(catalog_min(name='badge-check'), self.out, '--vendor', '1234567')
+        self.assertTrue((self.proj / 'previews/badge-check.html').is_file())
+        r = run_cli(minimal(name='badge-check'), self.out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((self.proj / 'previews/badge-check.html').exists())
+        self.assertIsNone(self.WORKER_WROTE_RE.search(r.stdout))
 
     def test_vendor_missing_asks_once_and_writes_nothing(self):   # Review Focus 5
         r = run_cli(minimal(), self.out)

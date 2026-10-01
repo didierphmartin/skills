@@ -22,7 +22,8 @@ outputs come from `fluent-vocabulary.md` (ServiceNow SDK 4.13.3).
 
 - Record: `{"type": "record_created", "table": "sys_user", "condition": "active=true"}` (also `record_updated`
   with `"trigger_strategy": "unique_changes"`, and `record_created_or_updated`). The table must be one the SDK
-  types, and so must every field in the condition (an encoded query: `^` AND, `^OR` OR, `ISEMPTY`, `ISNOTEMPTY`).
+  types, and so must every field in the condition (an encoded query: `^` AND, `^OR` OR, `ISEMPTY`, `ISNOTEMPTY`,
+  `LIKE` for "contains" — there is no `CONTAINS`; same operators in every `if`/`until` condition).
   `run_flow_in` defaults to `background`.
 - Scheduled: `{"type": "scheduled_daily", "time": {"hours": 9, "minutes": 0, "seconds": 0, "timezone": "UTC"}}`;
   `scheduled_weekly` adds `"day_of_week": 1` (1 = Monday); `scheduled_monthly` adds `"day_of_month": 1`;
@@ -56,6 +57,9 @@ A procedure that needs data from people is a catalog item. `form` describes its 
 - `variables`: `name` (snake_case, unique on the item), `label` (the question), `type` from
   `fluent-vocabulary.md` → Catalog, `mandatory`, `help`; `reference` and `list_collector` need `"reference":
   "<table>"`, `select_box` and `multiple_choice` need `"choices"`. A checkbox cannot be mandatory (use `yes_no`).
+- `select_box` (dropdown) and `multiple_choice` (radio buttons) take **one** answer. When the person may pick
+  **several** of a fixed list ("VPN, Git, Jira…"), write one `checkbox` variable per option (`vpn`, `git`, …) and
+  branch on each: `[{"pill": "form.vpn"}, "=true"]`. Several records from a table → `list_collector`.
 - Read an answer anywhere with `{"pill": "form.<name>"}` (a reference can be dot-walked: `form.new_hire.email`).
   A `list_collector` answer is a comma-separated list of sys_ids: look the records up with
   `["sys_idIN", {"pill": "form.equipment"}]`, then `for_each` over `Records`.
