@@ -36,7 +36,7 @@ def minimal(**over) -> dict:
 def run_cli(raw, out: Path, *args: str) -> subprocess.CompletedProcess:
     """Run create.py on a spec dict (written to a temp file) or on an existing spec path."""
     with tempfile.TemporaryDirectory() as td:
-        if isinstance(raw, dict):
+        if isinstance(raw, (dict, list)):
             i = Path(td) / 'spec.json'
             i.write_text(json.dumps(raw, ensure_ascii=False), encoding='utf-8')
         else:

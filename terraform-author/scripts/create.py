@@ -988,8 +988,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--catalog', help='catalog.json (auto-detected)')
     try:
         a = ap.parse_args(argv)
-    except SystemExit:
-        return 2
+    except SystemExit as e:   # argparse exits 0 for --help, 2 for a wrong argv
+        return e.code if isinstance(e.code, int) else 0 if e.code is None else 2
     try:
         raw = json.loads(Path(a.input).read_text(encoding='utf-8'))
     except Exception as e:  # noqa: BLE001 — any unreadable input is reported the same way
@@ -1009,7 +1009,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     files = project.files()
     folder = f'{spec.name}-{spec.cloud}'
-    root = write_project(Path(a.out), files, folder)
+    try:
+        root = write_project(Path(a.out), files, folder)
+    except OSError as e:   # unwritable or impossible --out: one line, like any other usage error
+        print(f'ERROR: cannot write {Path(a.out) / folder}: {e.strerror or e}', file=sys.stderr)
+        return 2
     secrets = [c['name'] for c in spec.of_type('secret')]
     print(f'VALID — "{spec.title}" ({spec.name}) on {project.cloud_title} {spec.region}')
     print(f'project: {root}')

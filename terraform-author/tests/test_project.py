@@ -79,6 +79,43 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(run_cli(bad, self.out).returncode, 2)
         self.assertEqual(run_cli(minimal(), self.out, '--cloud', 'gcp').returncode, 2)
 
+    def test_errors_beat_need_target_when_both_apply(self):
+        raw = minimal(title='')
+        del raw['target']
+        r = run_cli(raw, self.out)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('INVALID — 1 problem(s):', r.stderr)
+        self.assertNotIn('NEED_TARGET', r.stdout)
+        self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_unwritable_out_is_one_line_exit_2(self):
+        blocker = self.out / 'file'
+        blocker.write_text('x')
+        r = run_cli(minimal(), blocker / 'sub')
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr.startswith('ERROR: cannot write '), r.stderr)
+        self.assertEqual(len(r.stderr.strip().splitlines()), 1)
+        self.assertNotIn('Traceback', r.stderr)
+
+    def test_help_exits_0(self):
+        r = run_cli(minimal(), self.out, '--help')
+        self.assertEqual(r.returncode, 0)
+        self.assertIn('usage:', r.stdout)
+
+    def test_non_object_spec_is_invalid_not_a_crash(self):
+        r = run_cli([], self.out)          # a JSON list, via a file
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('INVALID', r.stderr)
+        self.assertNotIn('Traceback', r.stderr)
+        self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_hostile_name_is_invalid_and_writes_nothing(self):
+        r = run_cli(minimal(name='../evil'), self.out)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('INVALID', r.stderr)
+        self.assertEqual(list(self.out.iterdir()), [])
+        self.assertFalse((self.out.parent / 'evil-aws').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
