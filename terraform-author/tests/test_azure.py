@@ -155,7 +155,28 @@ class AzureMappingTest(unittest.TestCase):
     def test_readme_does_not_claim_the_endpoints_nsg_protects_endpoints(self):
         r = self.cp['README.md']
         self.assertNotIn('an NSG on each', r)
-        self.assertIn('the endpoints subnet has none', r)
+        self.assertIn("the endpoints subnet's NSG does not filter private-endpoint traffic", r)
+        self.assertNotIn('has none', r)
+
+    def test_two_databases_with_long_names_get_distinct_server_names(self):
+        import re
+        raw = {'name': 'a' * 24, 'title': 'T', 'environment': 'e' * 10, 'target': {'cloud': 'azure', 'region': 'francecentral'},
+               'components': [{'type': 'postgres', 'name': 'orders_primary_a'}, {'type': 'postgres', 'name': 'orders_primary_b'}]}
+        d = azure_files(raw)['database.tf']
+        names = re.findall(r'resource "azurerm_postgresql_flexible_server" "\w+" \{\n\s+name\s+= "([^"]*)"', d)
+        self.assertEqual(len(names), 2)
+        self.assertNotEqual(names[0], names[1])
+        for n in names:
+            n = n.replace('${random_string.suffix.result}', 'x' * 6)
+            self.assertLessEqual(len(n), 63)
+            self.assertNotIn('--', n)
+
+    def test_recovery_text_is_readme_only_not_a_warning(self):
+        p = create.AzureProject(spec_of(fixture('customer-portal.json'), 'azure'))
+        p.files()
+        self.assertFalse([w for w in p.warnings if 'administrator_password_wo_version' in w])
+        self.assertIn('## If an apply fails', p.readme())
+        self.assertNotIn('## If an apply fails', self.archive['README.md'])   # no database, no paragraph
 
 
 if __name__ == '__main__':

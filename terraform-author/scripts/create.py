@@ -604,7 +604,12 @@ class Project:
             lines += ['', '## Trade-offs and what was left out', '']
             lines += [f'- {w}' for w in self.warnings]
             lines += [f'- Left out: {self.catalog["out_of_v1"][x]}' for x in s.left_out]
+        lines += self.recovery_lines()
         return '\n'.join(lines) + '\n'
+
+    def recovery_lines(self) -> list[str]:
+        """README paragraph on recovering from a failed apply (empty when the cloud has nothing special to say)."""
+        return []
 
     # ---- what subclasses provide
     cloud_title = ''
@@ -1113,7 +1118,7 @@ class AzureProject(Project):
             out.append(Hcl('ephemeral', 'random_password', n, comment=f'Admin password of {n}: generated at apply time, written only to the server and the key vault, never to state.')
                        .set('length', 32).set('special', True).set('override_special', '-_.~'))
             srv = self.rg(Hcl('resource', 'azurerm_postgresql_flexible_server', n)
-                          .set('name', interp(f'{prefix(f"psql-{self.base}-{h}", 56)}${{random_string.suffix.result}}'))) \
+                          .set('name', interp(f'{prefix(f"psql-{h}-{self.base}", 56)}${{random_string.suffix.result}}'))) \
                 .set('version', d['version']).set('sku_name', self.catalog['sizes'][d['size']]['azure']) \
                 .set('storage_mb', d['storage_gb'] * 1024).set('auto_grow_enabled', True) \
                 .set('backup_retention_days', d['backup_days']) \
@@ -1139,15 +1144,19 @@ class AzureProject(Project):
                        .set('name', f'{h}-admin-password').set('key_vault_id', ref('azurerm_key_vault.main.id'))
                        .set('value_wo', ref(f'ephemeral.random_password.{n}.result')).set('value_wo_version', 1)
                        .set('depends_on', [ref('azurerm_role_assignment.deployer_secrets')]))
-        if self.dbs:
-            self.warnings.append('The database password is written to the server and to the key vault by the same apply. '
-                                 'After any partial or failed apply, raise `administrator_password_wo_version` of the server '
-                                 'and `value_wo_version` of its `<db>_password` key vault secret together (to the same new '
-                                 'number) so both receive the new password. The first apply may need one retry while the '
-                                 'key vault role assignment propagates.')
         if self.dbs and any(d['high_availability'] and not self.zones for d in self.dbs):
             self.warnings.append(f'{self.spec.region} has no availability zones: the database standby is in the same zone.')
         return out
+
+    def recovery_lines(self) -> list[str]:
+        """README only (not a warning): how to recover when the database password was written to only one place."""
+        if not self.dbs:
+            return []
+        return ['', '## If an apply fails', '',
+                'The database password is written to the server and to the key vault by the same apply. After any partial '
+                'or failed apply, raise `administrator_password_wo_version` of the server and `value_wo_version` of its '
+                '`<db>_password` key vault secret together (to the same new number) so both receive the new password. '
+                'The first apply may need one retry while the key vault role assignment propagates.']
 
     def secrets(self) -> list[Hcl]:
         """One key vault for all secrets and database passwords; the deployer gets Secrets Officer to write them."""
@@ -1298,8 +1307,9 @@ class AzureProject(Project):
         s = self.spec
         lines = [f'- Resource group `rg-{self.base}`; VNet {s.cidr} with one subnet per need, default outbound access '
                  f'off{", NAT gateway for the apps" if self.apps_list else ""}; network security groups on the subnets filter the '
-                 f'apps and database subnets (the endpoints subnet has none: private endpoints are protected by the '
-                 f'storage account refusing public access and by role-based access).']
+                 f"apps and database subnets (the endpoints subnet's NSG does not filter private-endpoint traffic, as endpoint network "
+                 f'policies are off; the private endpoints are protected by the storage account refusing public access and '
+                 f'by role-based access).']
         for a in self.apps_list:
             reach = 'public HTTPS address' if a['public_https'] else ('HTTPS address inside the network' if not self.any_public
                                                                       else 'reachable from the other apps only')
@@ -1376,7 +1386,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # noqa: BLE001 — any unreadable input is reported the same way
         print(f'error: cannot read the spec JSON: {e}', file=sys.stderr)
         return 2
-    spec = Spec(raw, load_catalog(a.catalog), a.cloud, a.region)
+    try:
+        catalog = load_catalog(a.catalog)
+        if not isinstance(catalog, dict) or not {'components', 'clouds', 'sizes', 'out_of_v1'} <= set(catalog):
+            raise ValueError('not a catalog.json (components, clouds, sizes, out_of_v1 expected)')
+    except Exception as e:  # noqa: BLE001 — missing file, invalid JSON, wrong shape: one line
+        print(f'error: cannot read the catalog: {e}', file=sys.stderr)
+        return 2
+    spec = Spec(raw, catalog, a.cloud, a.region)
     project = None
     if not spec.errors and spec.cloud and spec.region:
         project = project_for(spec)

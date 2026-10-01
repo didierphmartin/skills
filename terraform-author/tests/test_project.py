@@ -116,6 +116,22 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(list(self.out.iterdir()), [])
         self.assertFalse((self.out.parent / 'evil-aws').exists())
 
+    def test_bad_catalog_is_one_line_exit_2(self):
+        bad = self.out / 'cat.json'
+        for text in (None, '{"x": ', '[]', '{"components": {}}'):
+            if text is not None:
+                bad.write_text(text)
+            r = run_cli(minimal(), self.out, '--catalog', str(bad))
+            self.assertEqual(r.returncode, 2, text)
+            self.assertTrue(r.stderr.startswith('error: cannot read the catalog: '), r.stderr)
+            self.assertNotIn('Traceback', r.stderr)
+        self.assertEqual([p.name for p in self.out.iterdir()], ['cat.json'])
+
+    def test_report_has_no_recovery_warning(self):
+        r = run_cli(fixture('customer-portal.json'), self.out, '--cloud', 'azure')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse([l for l in r.stdout.splitlines() if l.startswith('warning:') and 'administrator_password_wo_version' in l])
+
 
 if __name__ == '__main__':
     unittest.main()
