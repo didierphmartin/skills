@@ -36,9 +36,11 @@ def build() -> str:
            'reply says so.', '', '```json', json.dumps(en, indent=2, ensure_ascii=False), '```', '',
            '## The spec (French)', '', 'Only `title` and the placeholder description change: names, options and edges are the same.', '',
            '```json', json.dumps(fr, indent=2, ensure_ascii=False), '```', '']
-    for cloud, region in (('aws', None), ('azure', None)):
-        spec = create.Spec(en, catalog, cloud, region)
-        assert not spec.errors and not spec.need_target, spec.errors
+    for cloud in ('aws', 'azure'):
+        spec = create.Spec(en, catalog, cloud, None)
+        if spec.errors or spec.need_target:
+            print(f'build_example: the customer-portal spec is invalid for {cloud}: {spec.errors or "needs a target"}')
+            sys.exit(1)
         project = create.project_for(spec)
         files = project.files()
         out += [f'## Generated for {project.cloud_title} ({spec.region})', '']
