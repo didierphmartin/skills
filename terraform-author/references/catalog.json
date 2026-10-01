@@ -1,0 +1,127 @@
+{
+  "terraform": ">= 1.11",
+  "providers": {
+    "aws": {"source": "hashicorp/aws", "version": "~> 6.0", "lab": "6.67.0"},
+    "azurerm": {"source": "hashicorp/azurerm", "version": "~> 5.0", "lab": "5.7.0"},
+    "random": {"source": "hashicorp/random", "version": "~> 3.7", "lab": "3.9.1"}
+  },
+  "clouds": {
+    "aws": {
+      "source": "aws provider 6.67.0 endpoint data (<region>.api.aws), sovereign of-/ov- partitions left out",
+      "regions": ["af-south-1", "ap-east-1", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1",
+                  "ap-south-2", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4",
+                  "ap-southeast-5", "ap-southeast-7", "ca-central-1", "ca-west-1", "eu-central-1", "eu-central-2",
+                  "eu-north-1", "eu-south-1", "eu-south-2", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1",
+                  "me-central-1", "me-south-1", "mx-central-1", "sa-east-1", "us-east-1", "us-east-2", "us-west-1",
+                  "us-west-2"]
+    },
+    "azure": {
+      "source": "learn.microsoft.com/azure/reliability/regions-list (updated 2026-09-23), restricted-access regions left out; zones = the region has availability zones",
+      "regions": {
+        "australiacentral": false, "australiaeast": true, "australiasoutheast": false, "austriaeast": true,
+        "belgiumcentral": true, "brazilsouth": true, "canadacentral": true, "canadaeast": false,
+        "centralindia": true, "centralus": true, "chilecentral": true, "denmarkeast": true, "eastasia": true,
+        "eastus": true, "eastus2": true, "francecentral": true, "germanywestcentral": true,
+        "indiasouthcentral": true, "indonesiacentral": true, "israelcentral": true, "italynorth": true,
+        "japaneast": true, "japanwest": true, "koreacentral": true, "koreasouth": false, "malaysiawest": true,
+        "mexicocentral": true, "newzealandnorth": true, "northcentralus": true, "northeurope": true,
+        "norwayeast": true, "polandcentral": true, "qatarcentral": true, "southafricanorth": true,
+        "southcentralus": true, "southindia": false, "southeastasia": true, "spaincentral": true,
+        "swedencentral": true, "switzerlandnorth": true, "uaenorth": true, "uksouth": true, "ukwest": false,
+        "westcentralus": false, "westeurope": true, "westindia": false, "westus": false, "westus2": true,
+        "westus3": true
+      }
+    }
+  },
+  "region_pairs_rule": "nearest region of the other cloud: AWS to Azure takes the first row with the AWS region, Azure to AWS the first row with the Azure region",
+  "region_pairs": [
+    ["us-east-1", "eastus"], ["us-east-2", "centralus"], ["us-west-1", "westus"], ["us-west-2", "westus2"],
+    ["ca-central-1", "canadacentral"], ["mx-central-1", "mexicocentral"], ["sa-east-1", "brazilsouth"],
+    ["eu-west-1", "northeurope"], ["eu-west-2", "uksouth"], ["eu-west-3", "francecentral"],
+    ["eu-central-1", "germanywestcentral"], ["eu-central-2", "switzerlandnorth"], ["eu-north-1", "swedencentral"],
+    ["eu-south-1", "italynorth"], ["eu-south-2", "spaincentral"], ["il-central-1", "israelcentral"],
+    ["me-central-1", "uaenorth"], ["af-south-1", "southafricanorth"], ["ap-east-1", "eastasia"],
+    ["ap-south-1", "centralindia"], ["ap-south-2", "indiasouthcentral"], ["ap-southeast-1", "southeastasia"],
+    ["ap-southeast-2", "australiaeast"], ["ap-southeast-3", "indonesiacentral"],
+    ["ap-southeast-4", "australiasoutheast"], ["ap-southeast-5", "malaysiawest"], ["ap-northeast-1", "japaneast"],
+    ["ap-northeast-2", "koreacentral"], ["ap-northeast-3", "japanwest"],
+    ["ca-west-1", "canadacentral"], ["me-south-1", "qatarcentral"], ["ap-southeast-7", "southeastasia"], ["us-east-1", "eastus2"],
+    ["us-west-1", "westus3"], ["us-east-2", "northcentralus"], ["us-east-2", "southcentralus"], ["us-west-2", "westcentralus"],
+    ["ca-central-1", "canadaeast"], ["eu-west-2", "ukwest"], ["eu-central-1", "westeurope"], ["eu-central-1", "polandcentral"],
+    ["eu-central-1", "austriaeast"], ["eu-west-3", "belgiumcentral"], ["eu-north-1", "norwayeast"], ["eu-north-1", "denmarkeast"],
+    ["ap-northeast-2", "koreasouth"], ["ap-south-2", "southindia"], ["ap-south-1", "westindia"], ["ap-southeast-2", "australiacentral"],
+    ["ap-southeast-2", "newzealandnorth"], ["sa-east-1", "chilecentral"]
+  ],
+  "components": {
+    "container_app": {
+      "options": {
+        "image": {"required": true, "kind": "text_or_placeholder"},
+        "port": {"default": 8080, "min": 1, "max": 65535},
+        "cpu": {"default": 0.5, "values": [0.25, 0.5, 1, 2, 4]},
+        "memory_gb": {"default": "2 x cpu", "rule": "memory_gb = 2 x cpu"},
+        "min_instances": {"default": 1, "min": 1, "max": 100},
+        "max_instances": {"default": 3, "min": 1, "max": 100},
+        "public_https": {"default": false},
+        "env": {"default": {}, "kind": "map of NAME to text or placeholder"}
+      },
+      "access_from": true
+    },
+    "postgres": {
+      "options": {
+        "version": {"default": "17", "values": ["16", "17"]},
+        "size": {"default": "small", "values": ["small", "medium", "large"]},
+        "storage_gb": {"default": 32, "values": [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]},
+        "backup_days": {"default": 7, "min": 7, "max": 35},
+        "high_availability": {"default": false}
+      },
+      "levels": ["connect"],
+      "default_level": "connect"
+    },
+    "object_storage": {
+      "options": {"versioning": {"default": true}},
+      "levels": ["read", "readwrite"]
+    },
+    "secret": {
+      "options": {},
+      "levels": ["read"],
+      "default_level": "read"
+    }
+  },
+  "sizes": {
+    "small": {"aws": "db.t4g.small", "azure": "B_Standard_B1ms", "azure_ha": false},
+    "medium": {"aws": "db.m7g.large", "azure": "GP_Standard_D2ds_v5", "azure_ha": true},
+    "large": {"aws": "db.r7g.xlarge", "azure": "MO_Standard_E4ds_v5", "azure_ha": true}
+  },
+  "roles": {
+    "aws": {
+      "object_storage.read": {"objects": ["s3:GetObject"], "bucket": ["s3:ListBucket"]},
+      "object_storage.readwrite": {"objects": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "bucket": ["s3:ListBucket"]},
+      "secret.read": {"secret": ["secretsmanager:GetSecretValue"]}
+    },
+    "azure": {
+      "object_storage.read": "Storage Blob Data Reader",
+      "object_storage.readwrite": "Storage Blob Data Contributor",
+      "secret.read": "Key Vault Secrets User",
+      "deployer.secrets": "Key Vault Secrets Officer"
+    }
+  },
+  "azure_resource_providers": {
+    "network": ["Microsoft.Network"],
+    "container_app": ["Microsoft.App", "Microsoft.ManagedIdentity", "Microsoft.OperationalInsights"],
+    "postgres": ["Microsoft.DBforPostgreSQL", "Microsoft.KeyVault"],
+    "object_storage": ["Microsoft.Storage"],
+    "secret": ["Microsoft.KeyVault"]
+  },
+  "out_of_v1": {
+    "vm": "Virtual machines are not in this version: describe the workload as a container app (an image), or set up the VM by hand.",
+    "mysql": "MySQL is not in this version: use postgres, or add MySQL by hand after generation.",
+    "custom_domain": "A custom domain with its own certificate is not in this version (it needs a DNS zone you own): the app gets the cloud's generated HTTPS address; point your domain at it by hand.",
+    "private_key_vault": "A private-only secret store is not in this version: Terraform writes secret values through the store's API, so it stays reachable over the internet, protected by role-based access.",
+    "multi_region": "Several regions are not in this version: generate one project per region.",
+    "kubernetes": "Kubernetes clusters are not in this version: use a container app.",
+    "serverless_function": "Serverless functions are not in this version: package the code as a container app.",
+    "cache": "Caches (Redis and similar) are not in this version.",
+    "queue": "Message queues are not in this version.",
+    "cdn": "A CDN in front of the app is not in this version."
+  }
+}
