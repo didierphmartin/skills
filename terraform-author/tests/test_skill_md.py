@@ -27,6 +27,7 @@ class SkillMdTest(unittest.TestCase):
         self.assertLessEqual(len(d), 1024)
         self.assertNotRegex(d, '[<>]')
         self.assertIn('Do NOT use for', d)
+        self.assertIn('no cloud account, credentials or network access is needed', d)
         for word in ('AWS', 'Azure', 'Terraform', 'the same on Azure/AWS'):
             self.assertIn(word, d)
 
@@ -50,7 +51,7 @@ class ReplyTemplateTest(unittest.TestCase):
              '✏️ Fill before plan: <comma-separated placeholder names> (terraform.tfvars — see README.md).',
              '🔑 Secrets, typed at apply: <comma-separated TF_VAR_ names>.',
              '▶️ In a terminal, in that folder: terraform init, then terraform plan -out tfplan, then terraform apply tfplan.',
-             '⚠️ <one sentence: the trade-off the report warns about, or what was left out>')
+             '⚠️ <one sentence: the trade-off the report warns about, and what was left out when both are reported>')
 
     def test_rule_7_is_the_template_in_order(self):
         skill = (SKILL / 'SKILL.md').read_text(encoding='utf-8')
@@ -77,6 +78,22 @@ class ReferencesTest(unittest.TestCase):
         spec = (SKILL / 'references' / 'infra-spec.md').read_text(encoding='utf-8')
         self.assertNotIn('example-customer-portal', spec)
         self.assertIn('For maintainers: references/example-customer-portal.md', skill)
+
+    def test_step_5_words_are_in_the_report(self):
+        skill = (SKILL / 'SKILL.md').read_text(encoding='utf-8')
+        with tempfile.TemporaryDirectory() as out:
+            r = subprocess.run([sys.executable, str(SKILL / 'scripts' / 'create.py'), '-i',
+                                str(SKILL / 'tests' / 'fixtures' / 'customer-portal.json'), '--cloud', 'azure', '--out', out],
+                               capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        for word in ('note:', 'warning:', 'left out:', 'NEXT:'):
+            self.assertIn(word, skill)
+            self.assertIn(word, r.stdout)
+
+    def test_deploy_points_to_the_readme_recovery_section(self):
+        d = (SKILL / 'references' / 'deploy.md').read_text(encoding='utf-8')
+        self.assertIn('"If an apply fails"', d)
+        self.assertLess(d.index('terraform output'), d.index('"If an apply fails"'))
 
     def test_deploy_names_the_commands(self):
         d = (SKILL / 'references' / 'deploy.md').read_text(encoding='utf-8')

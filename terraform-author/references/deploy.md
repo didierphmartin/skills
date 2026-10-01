@@ -41,9 +41,11 @@ terraform plan -out tfplan
 terraform apply tfplan
 ```
 
-If an apply fails part-way, read the "If an apply fails" section of the project's README (Azure projects with a database) before applying again: it says which two version numbers to raise together. `terraform output` then shows the app addresses, database endpoints and storage names. Commit
+`terraform output` then shows the app addresses, database endpoints and storage names. Commit
 `.terraform.lock.hcl` with the project. State is local (`terraform.tfstate`, ignored by git): keep it safe, or move
 it to a remote backend (S3 / Azure Storage) before a team works on it.
+
+If an apply fails part-way, read the "If an apply fails" section of the project's README (Azure projects with a database) before applying again: it says which two version numbers to raise together.
 
 ## Change it
 
@@ -52,6 +54,6 @@ Ask SynergyAI to change the description and run the skill again: the generated f
 
 ## Remove it
 
-`terraform destroy`. Databases are protected first: on AWS set `deletion_protection = false` in `database.tf` and
-apply (a final snapshot is kept); on Azure remove the `lifecycle { prevent_destroy = true }` blocks. An Azure key
+`terraform destroy`. Databases (and, on Azure, storage accounts) are protected first: on AWS set `deletion_protection = false` in `database.tf` and
+apply (a final snapshot is kept); on Azure remove the `lifecycle { prevent_destroy = true }` blocks of the databases and storage accounts. An Azure key
 vault keeps its name reserved for 7 days after deletion (purge protection).
