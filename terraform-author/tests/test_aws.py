@@ -115,6 +115,26 @@ class AwsMappingTest(unittest.TestCase):
         self.assertIn('- `web`: `UPLOADS_BUCKET`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `PAYMENT_API_KEY`, `DB_USER`, `DB_PASSWORD`', r)
         self.assertEqual(self.cp['terraform.tfvars.example'].splitlines()[-1], 'container_image = ""')
 
+    def test_multiline_text_stays_valid(self):   # descriptions land in comments: one line each
+        raw = fixture('customer-portal.json')
+        k = next(iter(raw['placeholders']))
+        raw['placeholders'][k] = 'first line\nsecond line\n\nthird'
+        f = aws_files(raw)
+        self.assertIn(f'# first line second line third\n{k} = ""', f['terraform.tfvars.example'])
+        self.assertIn(f'- `{k}` — first line second line third', f['README.md'])
+        self.assertIn('"first line\\nsecond line\\n\\nthird"', f['variables.tf'])
+
+    def test_rds_identifier_prefix_fits(self):   # identifier_prefix + 26 random characters must fit in 63
+        import re
+        raw = {'name': 'a' * 24, 'title': 'T', 'environment': 'e' * 10, 'target': {'cloud': 'aws', 'region': 'eu-west-3'},
+               'components': [{'type': 'postgres', 'name': 'd' * 19}]}
+        f = aws_files(raw)
+        m = re.search(r'identifier_prefix\s+= "([^"]*)"', f['database.tf'])
+        self.assertTrue(m)
+        self.assertLessEqual(len(m.group(1)), 37)
+        self.assertTrue(m.group(1).endswith('-'))
+        self.assertNotIn('--', m.group(1))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -435,6 +435,10 @@ class Hcl:
                 return str(int(v)) if v.is_integer() else repr(v)
             case str():
                 esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('${', '$${').replace('%{', '%%{')
+                # control characters last, so the backslashes they add are not escaped again; a raw newline in a
+                # quoted HCL string is a syntax error
+                esc = esc.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                esc = re.sub(r'[\x00-\x1f]', lambda m: f'\\u{ord(m.group()):04x}', esc)
                 return f'"{esc}"'
             case list():
                 return '[' + ', '.join(Hcl.value(x) for x in v) + ']'
@@ -446,7 +450,10 @@ class Hcl:
         raise TypeError(f'no HCL form for {v!r}')
 
     def render(self, depth: int = 0, head: str | None = None) -> list[str]:
-        """The block's lines at this depth (two spaces per level); `head` replaces "kind labels" for objects."""
+        """The block's lines at this depth (two spaces per level); `head` replaces "kind labels" for objects.
+
+        Attributes are aligned in runs: a run ends before an object() attribute (and at any nested block), so the
+        `=` of attributes written after an object() align among themselves, as `terraform fmt` does."""
         pad = '  ' * depth
         head = head or ' '.join([self.kind] + [f'"{lab}"' for lab in self.labels])
         lines = [f'{pad}# {self.comment}'] if self.comment else []
@@ -489,7 +496,9 @@ def ref(text: str) -> Raw:
 
 
 def interp(text: str) -> Raw:
-    """A quoted string with ${...} interpolation, e.g. interp('${aws_s3_bucket.x.arn}/*')."""
+    """A quoted string with ${...} interpolation, e.g. interp('${aws_s3_bucket.x.arn}/*').
+
+    For internal expressions only: it escapes quotes but not backslashes, so never pass user text through it."""
     return Raw('"' + text.replace('"', '\\"') + '"')
 
 
@@ -557,7 +566,7 @@ class Project:
         """The file the user copies to terraform.tfvars: one line per placeholder, its description above it."""
         lines = ['# Copy to terraform.tfvars and fill every value. Secrets are not here: export them as TF_VAR_<name>.']
         for n, d in self.spec.placeholders.items():
-            lines += [f'# {d}', f'{n} = ""']
+            lines += [f'# {" ".join(d.split())}', f'{n} = ""']
         return '\n'.join(lines) + '\n'
 
     def placeholder_or_text(self, v):
@@ -576,7 +585,7 @@ class Project:
         lines += self.login_lines()
         if s.placeholders:
             lines += ['', 'Fill the placeholders: `cp terraform.tfvars.example terraform.tfvars`, then set:', '']
-            lines += [f'- `{n}` — {d}' for n, d in s.placeholders.items()]
+            lines += [f'- `{n}` — {" ".join(d.split())}' for n, d in s.placeholders.items()]
         if secrets:
             lines += ['', 'Secrets are typed at apply time and never written to state or to a file:', '']
             lines += [f'- `export TF_VAR_{n}=\'…\'`' for n in secrets]
@@ -724,7 +733,7 @@ class AwsProject(Project):
         for d in dbs:
             n = d['name']
             out.append(Hcl('resource', 'aws_db_instance', n)
-                       .set('identifier_prefix', prefix(f'{self.base}-{n}', 40)).set('engine', 'postgres')
+                       .set('identifier_prefix', prefix(f'{self.base}-{n}', 37)).set('engine', 'postgres')
                        .set('engine_version', d['version'])
                        .set('instance_class', self.catalog['sizes'][d['size']]['aws'])
                        .set('allocated_storage', d['storage_gb']).set('max_allocated_storage', d['storage_gb'] * 2)

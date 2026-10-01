@@ -15,6 +15,13 @@ class HclTest(unittest.TestCase):
         self.assertEqual(v(['a', Raw('b.c')]), '["a", b.c]')
         self.assertEqual(v({'Name': 'x', 'cost-center': 'y'}), '{ Name = "x", "cost-center" = "y" }')
 
+    def test_control_characters_are_escaped(self):   # a raw newline in a quoted string is a syntax error
+        v = Hcl.value
+        self.assertEqual(v('a\nb\r\tc'), '"a\\nb\\r\\tc"')
+        self.assertEqual(v('x\x01y\x1fz'), '"x\\u0001y\\u001fz"')
+        self.assertEqual(v('back\\slash\n'), '"back\\\\slash\\n"')   # the added backslash is not escaped again
+        self.assertNotIn('\n', v('l1\nl2'))
+
     def test_alignment_runs_end_at_blocks_and_comments(self):
         b = Hcl('resource', 'aws_db_instance', 'db').set('engine', 'postgres').set('storage_encrypted', True)
         b.block('timeouts').set('create', '60m')
