@@ -124,6 +124,39 @@ class AzureMappingTest(unittest.TestCase):
         self.assertIn('name                            = "staverylonuploads${random_string.suffix.result}"', s['storage.tf'])
         self.assertIn('name                       = "kv-a-very-long-pr-${random_string.suffix.result}"', s['secrets.tf'])
 
+    def test_postgres_server_name_fits_63_characters(self):   # flexible server names are 3-63 lowercase, digits, hyphens
+        import re
+        raw = {'name': 'a' * 24, 'title': 'T', 'environment': 'e' * 10, 'target': {'cloud': 'azure', 'region': 'francecentral'},
+               'components': [{'type': 'postgres', 'name': 'd' * 10 + '_' + 'e' * 9}]}
+        d = azure_files(raw)['database.tf']
+        m = re.search(r'resource "azurerm_postgresql_flexible_server" "\w+" \{\n\s+name\s+= "([^"]*)"', d)
+        self.assertTrue(m, d)
+        name = m.group(1).replace('${random_string.suffix.result}', 'x' * 6)
+        self.assertLessEqual(len(name), 63, name)
+        self.assertRegex(name, r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')
+        self.assertNotIn('--', name)
+        self.assertTrue(m.group(1).endswith('${random_string.suffix.result}'))
+
+    def test_server_waits_for_the_vault_secret_and_readme_says_how_to_recover(self):
+        d = self.cp['database.tf']
+        self.assertIn('azurerm_key_vault_secret.db_password]', d.split('azurerm_postgresql_flexible_server" "db"')[1].split('lifecycle')[0])
+        self.assertNotIn('azurerm_postgresql_flexible_server', d.split('resource "azurerm_key_vault_secret" "db_password"')[1])   # no cycle
+        r = self.cp['README.md']
+        self.assertIn('`administrator_password_wo_version`', r)
+        self.assertIn('`value_wo_version`', r)
+        self.assertIn('role assignment propagates', r)
+
+    def test_readme_ha_wording_follows_the_mode(self):
+        self.assertIn('zone-redundant standby', self.shop['README.md'])      # eastus has zones
+        self.assertNotIn('same-zone standby', self.shop['README.md'])
+        self.assertIn('same-zone standby', self.tools['README.md'])           # westus has none
+        self.assertNotIn('zone-redundant standby', self.tools['README.md'])
+
+    def test_readme_does_not_claim_the_endpoints_nsg_protects_endpoints(self):
+        r = self.cp['README.md']
+        self.assertNotIn('an NSG on each', r)
+        self.assertIn('the endpoints subnet has none', r)
+
 
 if __name__ == '__main__':
     unittest.main()

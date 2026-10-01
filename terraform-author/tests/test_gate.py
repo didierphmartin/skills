@@ -28,6 +28,10 @@ class LabGateTest(unittest.TestCase):
         out = self.gate('azure')
         expected = [s for s in SPECS if not s.startswith('aws-')]
         self.assertEqual(sorted(l.split()[1] for l in out.splitlines() if l.startswith('PASS')), expected)
+        # every warning is azurerm_resources_missing_prevent_destroy (Facts verified 4); a change here is a new resource
+        counts = {l.split()[1]: int(l.rsplit(' warnings', 1)[0].rsplit(' ', 1)[1]) for l in out.splitlines() if l.startswith('PASS')}
+        self.assertEqual(counts, {'all-options': 6, 'azure-mixed-apps': 4, 'customer-portal': 5, 'customer-portal-fr': 5,
+                                  'internal-tools': 4, 'storage-only': 3})
 
 
 if __name__ == '__main__':
