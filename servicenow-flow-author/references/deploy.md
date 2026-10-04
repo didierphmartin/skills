@@ -12,7 +12,9 @@ folder into the browser on every skill run, so the SDK must never land there. Th
 across (deleting nothing there), builds and installs, then copies `keys.ts` back. The zip
 `x_<code>_synergy.zip` only moves the project to another machine: it holds the whole project,
 `src/fluent/generated/keys.ts` included (not `node_modules`, `dist`, `target`, `.now`), as of the last SynergyAI
-run — unzip it under `outputs/servicenow/` there and run `build-install.sh`. One app ("SynergyAI flows") holds every flow; `FLOWS.md` in the folder lists them:
+run — unzip it under `outputs/servicenow/` there and run `build-install.sh`. A test flow can go to a separate app
+with `--app <name>` (scope `x_<code>_<name>`, at most 18 characters), so installing or removing it never touches
+the shared app. One app ("SynergyAI flows") holds every flow; `FLOWS.md` in the folder lists them:
 per flow its file, trigger, who submits the order form and when, the catalog and category it is listed in, the
 variables, and each placeholder (filled or to fill).
 

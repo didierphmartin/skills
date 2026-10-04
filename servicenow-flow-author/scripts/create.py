@@ -1439,9 +1439,10 @@ class Project:
     next install create duplicates.
     """
 
-    def __init__(self, out: Path, vendor: str):
+    def __init__(self, out: Path, vendor: str, app: str = 'synergy'):
         self.out, self.vendor = out, vendor
-        self.scope = f'x_{vendor}_synergy'
+        self.scope = f'x_{vendor}_{app}'
+        self.app_name = 'SynergyAI flows' if app == 'synergy' else f'SynergyAI flows ({app})'
         self.root = out / self.scope
         self.written: list[str] = []
 
@@ -1601,7 +1602,7 @@ echo "Installed from $build"
         first = not self.exists()
         if first:
             self.put('now.config.json', json.dumps({'scope': self.scope, 'scopeId': uuid.uuid4().hex,
-                                                    'name': 'SynergyAI flows'}, indent=2) + '\n')
+                                                    'name': self.app_name}, indent=2) + '\n')
             self.put('package.json', self.package_json())
             self.put('.gitignore', 'node_modules/\ndist/\ntarget/\n')
             self.put('README.md', self.readme())
@@ -1618,9 +1619,10 @@ echo "Installed from $build"
         return first, self.zip()
 
 
-def write_project(out: Path, vendor: str, spec: dict, ir: dict, today: str) -> tuple[Path, list[str], bool, Path]:
+def write_project(out: Path, vendor: str, spec: dict, ir: dict, today: str,
+                  app: str = 'synergy') -> tuple[Path, list[str], bool, Path]:
     """(project_dir, written_paths, first_use, zip_path) — the plan's entry point, one call for the CLI and the tests."""
-    project = Project(out, vendor)
+    project = Project(out, vendor, app)
     first, zpath = project.write(spec, ir, today)
     return project.root, project.written, first, zpath
 
@@ -1633,6 +1635,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('-i', '--input', required=True, help='the JSON flow spec (references/flow-spec.md)')
     ap.add_argument('--vendor', help="the instance's company code (asked once, then remembered in <out>/.vendor)")
     ap.add_argument('--out', default='/outputs/servicenow', help='output root (default /outputs/servicenow)')
+    ap.add_argument('--app', default='synergy',
+                    help='app name in the scope x_<code>_<app> (default synergy); another name keeps a test app apart')
     ap.add_argument('--vocab', help='fluent-vocabulary.json (auto-detected)')
     ap.add_argument('--today', default=datetime.date.today().isoformat(), help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
@@ -1647,6 +1651,11 @@ def main(argv: list[str] | None = None) -> int:
     errors, ir = check_spec(spec, vocab)
     if verr:
         errors.append(f'--vendor: {verr}')
+    if not re.fullmatch(r'[a-z][a-z0-9]{0,15}', a.app):
+        errors.append(f'--app: "{a.app}" must be lowercase letters and digits, starting with a letter')
+    elif vendor is not None and len(f'x_{vendor}_{a.app}') > 18:
+        errors.append(f'--app: the scope x_{vendor}_{a.app} would exceed 18 characters '
+                      f'(developing-apps-guide.md, scope rule)')
     if errors:
         print(f'INVALID — {len(errors)} problem(s):\n  - ' + '\n  - '.join(errors), file=sys.stderr)
         print('NEXT: fix every problem in one revision of the spec and run again (at most two revisions).', file=sys.stderr)
@@ -1654,7 +1663,7 @@ def main(argv: list[str] | None = None) -> int:
     if vendor is None:
         print(NEED_VENDOR_TEXT)
         return 1
-    proj, written, first, zpath = write_project(out, vendor, spec, ir, a.today)
+    proj, written, first, zpath = write_project(out, vendor, spec, ir, a.today, a.app)
     flows = len(list((proj / 'flow-specs').glob('*.json')))
     print(f"VALID — flow \"{ir['title']}\" ({ir['name']})")
     print(f"project: {proj} ({'created' if first else 'existing'}; {flows} flow{'s' if flows != 1 else ''})")

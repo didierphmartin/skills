@@ -176,6 +176,25 @@ class ProjectTest(unittest.TestCase):
         self.assertFalse((self.proj / 'previews/badge-check.html').exists())
         self.assertIsNone(self.WORKER_WROTE_RE.search(r.stdout))
 
+    def test_app_option_names_a_separate_app(self):   # a test app never touches the shared x_<code>_synergy app
+        r = run_cli(minimal(), self.out, '--vendor', '1234567', '--app', 'sytest')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cfg = json.loads((self.out / 'x_1234567_sytest' / 'now.config.json').read_text())
+        self.assertEqual((cfg['scope'], cfg['name']), ('x_1234567_sytest', 'SynergyAI flows (sytest)'))
+        self.assertFalse(self.proj.exists())
+        self.assertIn('x_1234567_sytest', (self.out / 'x_1234567_sytest' / 'build-install.sh').read_text())
+        default = run_cli(minimal(), self.out)
+        self.assertEqual(default.returncode, 0, default.stderr)
+        self.assertEqual(json.loads((self.proj / 'now.config.json').read_text())['name'], 'SynergyAI flows')
+
+    def test_app_option_is_checked(self):
+        for app, why in (('Bad_Name', 'lowercase'), ('toolongname', '18 characters')):
+            r = run_cli(minimal(), self.out, '--vendor', '1234567', '--app', app)
+            self.assertEqual(r.returncode, 1, app)
+            self.assertIn('--app', r.stderr)
+            self.assertIn(why, r.stderr)
+        self.assertEqual(list(self.out.glob('x_*')), [])
+
     def test_vendor_missing_asks_once_and_writes_nothing(self):   # Review Focus 5
         r = run_cli(minimal(), self.out)
         self.assertEqual(r.returncode, 1)
