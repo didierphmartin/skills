@@ -55,6 +55,20 @@ class CreateTest(unittest.TestCase):
         self.assertIn('UNBOUND  #Frobnicate Widgets is unbound', out)
         self.assertIn('step 2', out)
 
+    def test_unbound_action_lists_closest_catalog_functions(self):
+        # The catalog is not in the model's context; the report names the real
+        # functions so one revision can fix the action name.
+        d = json.loads(json.dumps(BASE)); d['steps'][1]['text'] = '#Update Workday Record for the requester.'
+        code, out, err, _ = run(d)
+        self.assertEqual(code, 0, err)
+        self.assertIn('#Update Workday Record is unbound (ambiguous', out)
+        self.assertIn('closest: Workday: get_pto_balance, Workday: submit_time_off', out)
+
+    def test_unbound_action_with_no_match_suggests_handoff(self):
+        d = json.loads(json.dumps(BASE)); d['steps'][1]['text'] = '#Frobnicate Widgets for the requester.'
+        code, out, err, _ = run(d)
+        self.assertIn('no catalog function matches — use a native verb or #Prompt for Handoff', out)
+
     def test_prompt_for_handoff_is_native_despite_lowercase_words(self):
         d = json.loads(json.dumps(BASE))
         d['steps'][1]['text'] = 'No connector yet: #Prompt for Handoff to the IAM team.'

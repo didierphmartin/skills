@@ -88,23 +88,36 @@ def load_catalog(explicit: str | None) -> tuple[list[tuple[str, str, str]], str 
     return [], None
 
 
+def score(at: list[str], server: str, tool: str) -> int:
+    """The analyzer's auto-binding score of action tokens `at` against one catalog tool."""
+    n = sum(4 for st in tok(server) if st in at)
+    tt = tok(tool)
+    hits = sum(1 for t in tt if t in at)
+    n += 2 * hits
+    if tt and hits == len(tt):
+        n += 1
+    return n
+
+
 def auto_bind(action: str, tools: list[tuple[str, str, str]]) -> tuple[str | None, int, bool]:
     at = tok(action)
     if not at:
         return None, 0, False
     best, best_score, tie = None, 0, False
     for server, _name, tool in tools:
-        score = sum(4 for st in tok(server) if st in at)
-        tt = tok(tool)
-        hits = sum(1 for t in tt if t in at)
-        score += 2 * hits
-        if tt and hits == len(tt):
-            score += 1
-        if score > best_score:
-            best, best_score, tie = f'{server}.{tool}', score, False
-        elif score == best_score and score > 0:
+        sc = score(at, server, tool)
+        if sc > best_score:
+            best, best_score, tie = f'{server}.{tool}', sc, False
+        elif sc == best_score and sc > 0:
             tie = True
     return (best if best_score >= 4 and not tie else None), best_score, tie
+
+
+def candidates(action: str, tools: list[tuple[str, str, str]], n: int = 3) -> list[str]:
+    """The n best-scoring catalog functions for an unbound action, as "Server: tool"."""
+    at = tok(action)
+    scored = sorted(((score(at, s, t), name, t) for s, name, t in tools), key=lambda x: -x[0])
+    return [f'{name}: {t}' for sc, name, t in scored[:n] if sc > 0]
 
 
 def render(d: dict) -> str:
@@ -175,13 +188,15 @@ def check(d: dict, tools: list[tuple[str, str, str]]) -> tuple[list[str], list[s
     for a in listed:
         if a.lower() in NATIVE_VERBS:
             bound[a] = 'native'; continue
-        target, score, tie = auto_bind(a, tools)
+        target, _score, tie = auto_bind(a, tools)
         if target:
             bound[a] = target; servers.add(target.split('.')[0])
         else:
             unbound.append(a)
-            hint = ' (ambiguous — two tools score the same; add the server name to the action)' if tie else (
-                ' name it after the MCP function, e.g. "#Get PTO Balance"; add the server name if two servers have it)' if score < 4 else '')
+            close = candidates(a, tools)
+            hint = ' (ambiguous — two tools score the same)' if tie else ''
+            hint += (f'; closest: {", ".join(close)} — name it after one of these functions'
+                     if close else '; no catalog function matches — use a native verb or #Prompt for Handoff')
             warnings.append(f'{a} is unbound{hint} — {where.get(a.lower(), "?")}')
     # tools used: merge servers of bound actions (display names)
     names = {s: n for s, n, _ in tools}
