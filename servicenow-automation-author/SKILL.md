@@ -17,7 +17,7 @@ context-references: references/automation-spec.md
    the workflow, and never TypeScript. The key, the form variable names and the version are copied by the script;
    you never retype them between parts. Never paste the spec or the generated files in chat.
 2. **The version comes from `save_automation`** (step 1), never from you, and the spec has no `version` field. Every
-   run of `create.py` in this turn uses that same `--version N`; call `save_automation` with a spec only once.
+   run of `create.py` in this turn uses that same `--version N`.
 3. **Run the script, then fix everything at once.** On `INVALID` (exit 1) every problem is listed with the part it
    comes from: `[automation]` the spec itself, `[flow]` servicenow-flow-author, `[playbook]` playbook-author,
    `[workflow]` workflow-compile. Fix all of them in one revision of the spec and run again. **At most two
@@ -65,10 +65,11 @@ context-references: references/automation-spec.md
    workflow finds its playbook by it.
 4. `save_workflow {path: "/outputs/<key>.workflow.json", automation_id}` — add `workflow_id` when step 1 returned
    one: that workflow is updated in place (an active one is stopped and started again).
-5. `save_automation {key, title, playbook_id, workflow_id}` with the ids from steps 3 and 4 — the record now links
-   every part.
-6. Install: when the user's ServiceNow instance is dev or test, `install_automation {automation_id, server_id,
-   scope}` (the scope from the `flow:` line); a refusal means a manual install. Then reply with rule 7's lines.
+5. `save_automation {key, title, spec, playbook_id, workflow_id}` with the ids from steps 3 and 4 and the final spec
+   (as last run, after any revision) — the record now links every part.
+6. Install: pick a server from `save_automation`'s `servers` whose `environment` is `dev` or `test`, and call
+   `install_automation {automation_id, server_id, scope}` (the scope from the `flow:` line); no such server, or a
+   refusal, means a manual install. Then reply with rule 7's lines.
 
 ## Regenerating
 

@@ -133,6 +133,33 @@ class RejectTest(unittest.TestCase):
         msg = self.assertRejected(s, 'outcomes')
         self.assertIn('placeholders', msg)
 
+    def test_string_step_is_invalid_naming_the_step(self):
+        s = copy.deepcopy(FIXTURE); s['playbook']['steps'] = ['#Unlock Okta User']
+        msg = self.assertRejected(s, 'playbook.steps[1]')
+        self.assertNotIn('Traceback', msg)
+
+    def test_bad_sub_is_invalid(self):
+        s = copy.deepcopy(FIXTURE); s['playbook']['steps'][0]['sub'] = 'not a list'
+        msg = self.assertRejected(s, 'playbook.steps[1]')
+        self.assertNotIn('Traceback', msg)
+
+    def test_sub_skill_crash_is_invalid_with_prefix(self):
+        import contextlib, importlib.util, io, types
+        spec = importlib.util.spec_from_file_location('_automation_under_test', SCRIPT)
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        boom = types.SimpleNamespace(main=lambda argv: (_ for _ in ()).throw(KeyError('nodes')))
+        self.assertEqual(mod.call(boom, []), (1, '', "- KeyError: 'nodes'"))
+        real = mod.load_script
+        mod.load_script = lambda skill, script: boom if skill == 'workflow-compile' else real(skill, script)
+        td = tempfile.mkdtemp(); unittest.addModuleCleanup(shutil.rmtree, td, ignore_errors=True)
+        i = Path(td) / 'spec.json'; i.write_text(json.dumps(FIXTURE))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = mod.main(['-i', str(i), '--version', '3', '--out', str(Path(td) / 'o'), '--vendor', '2215723'])
+        self.assertEqual(code, 1, out.getvalue() + err.getvalue())
+        self.assertIn("[workflow] KeyError: 'nodes'", err.getvalue())
+        self.assertFalse((Path(td) / 'o').exists())
+
     def test_need_vendor_passes_through(self):
         code, out, err, d = run(FIXTURE, extra=())
         self.assertEqual(code, 1, out + err)

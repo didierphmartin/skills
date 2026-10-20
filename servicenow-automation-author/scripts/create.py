@@ -61,6 +61,8 @@ def call(mod, argv: list[str]) -> tuple[int, str, str]:
             code = mod.main(argv)
         except SystemExit as e:
             code = e.code if isinstance(e.code, int) else 2
+        except Exception as e:  # noqa: BLE001 — a sub-skill crash is reported as INVALID under its prefix
+            return 1, '', f'- {type(e).__name__}: {e}'
     return int(code or 0), out.getvalue(), err.getvalue()
 
 
@@ -116,6 +118,14 @@ def check(spec) -> list[str]:
         errors.append('playbook.trigger: what the request is (non-empty text)')
     if not (isinstance(pb.get('steps'), list) and pb['steps']):
         errors.append('playbook.steps: at least one playbook step')
+    else:
+        for n, st in enumerate(pb['steps'], 1):
+            sub = st.get('sub', []) if isinstance(st, dict) else None
+            if not (isinstance(st, dict) and isinstance(st.get('text'), str) and st['text'].strip()):
+                errors.append(f'playbook.steps[{n}] must be {{"text": "…", "sub": ["…"]}} with a non-empty text, '
+                              f'got {json.dumps(st, ensure_ascii=False)[:80]}')
+            elif not (isinstance(sub, list) and all(isinstance(x, str) for x in sub)):
+                errors.append(f'playbook.steps[{n}].sub must be a list of strings')
     outcomes = spec.get('outcomes', {})
     failed = outcomes.get('failed', {}) if isinstance(outcomes, dict) else None
     if not isinstance(failed, dict):
