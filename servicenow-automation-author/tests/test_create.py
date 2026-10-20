@@ -1,0 +1,150 @@
+import copy, json, re, shutil, subprocess, sys, tempfile, unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SCRIPT = HERE.parent / 'scripts' / 'create.py'
+FIXTURE = json.loads((HERE / 'fixtures' / 'okta-reset.json').read_text())
+SCOPE = 'x_2215723_synergy'
+
+
+def run(spec, version=3, extra=('--vendor', '2215723')):
+    """Run create.py on `spec` with --out a fresh tempdir; return (code, stdout, stderr, out dir)."""
+    td = tempfile.mkdtemp()
+    unittest.addModuleCleanup(shutil.rmtree, td, ignore_errors=True)
+    i = Path(td) / 'spec.json'
+    i.write_text(json.dumps(spec))
+    out = Path(td) / 'outputs'
+    r = subprocess.run([sys.executable, str(SCRIPT), '-i', str(i), '--version', str(version), '--out', str(out), *extra],
+                       capture_output=True, text=True)
+    return r.returncode, r.stdout, r.stderr, out
+
+
+class CreateTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.code, cls.out, cls.err, cls.dir = run(FIXTURE)
+
+    def test_fixture_writes_the_three_parts_and_the_record(self):
+        self.assertEqual(self.code, 0, self.out + self.err)
+        self.assertTrue((self.dir / 'servicenow' / SCOPE / 'flow-specs' / 'okta-reset.json').is_file())
+        self.assertTrue((self.dir / 'servicenow' / SCOPE / 'src' / 'fluent' / 'flows' / 'okta-reset.now.ts').is_file())
+        self.assertTrue((self.dir / 'okta-reset.playbook.md').is_file())
+        self.assertTrue((self.dir / 'okta-reset.workflow.json').is_file())
+        self.assertTrue((self.dir / 'okta-reset.automation.json').is_file())
+
+    def test_report_lines(self):
+        lines = self.out.splitlines()
+        self.assertEqual(lines[0], 'VALID — automation "Okta password reset" v3')
+        self.assertTrue(lines[1].startswith('flow: '), lines[1])
+        self.assertTrue(lines[2].startswith('playbook: '), lines[2])
+        self.assertTrue(lines[3].startswith('workflow: '), lines[3])
+        self.assertTrue(lines[4].startswith('automation: '), lines[4])
+        self.assertEqual(lines[5], 'NEXT: save_playbook_agent then save_workflow then save_automation')
+        self.assertIn('----- playbook -----', self.out)
+        self.assertIn('Title: Okta password reset', self.out)
+
+    def flow(self):
+        return json.loads((self.dir / 'servicenow' / SCOPE / 'flow-specs' / 'okta-reset.json').read_text())
+
+    def task(self):
+        return next(s for s in self.flow()['steps'] if s.get('action') == 'createCatalogTask')
+
+    def test_flow_tag_and_stamp(self):
+        t = self.task()
+        self.assertEqual(t['inputs']['ah_fields']['correlation_display'], 'synergyai:okta-reset')
+        self.assertEqual(t['inputs']['ah_fields']['correlation_id'], 'okta-reset@3')
+        self.assertEqual(t['inputs']['ah_fields']['assignment_group'], {'placeholder': 'synergyai_group'})
+        self.assertIs(t['inputs']['ah_wait'], True)
+        self.assertEqual([s['id'] for s in self.flow()['steps']], ['synergyai_task', 'log_closed'])
+
+    def test_flow_stamp_variable(self):
+        v = {x['name']: x for x in self.flow()['form']['variables']}
+        self.assertEqual(v['synergyai_automation']['default'], 'okta-reset@3')
+        self.assertIs(v['synergyai_automation']['hidden'], True)
+        self.assertIs(v['synergyai_automation']['read_only'], True)
+        self.assertEqual(list(v)[:2], ['user_email', 'reason'])
+
+    def test_playbook_inputs_are_the_form_variables(self):
+        text = (self.dir / 'okta-reset.playbook.md').read_text()
+        line = next(l for l in text.splitlines() if l.startswith('The request is a ServiceNow job'))
+        names = re.findall(r'(\w+) \(', line.split('carry', 1)[1])
+        self.assertEqual(names, [v['name'] for v in FIXTURE['form']['variables']])
+        self.assertIn('Trigger: An employee asks for an Okta password reset. (automation okta-reset@3)', text)
+
+    def test_workflow_start_and_back_args(self):
+        d = json.loads((self.dir / 'okta-reset.workflow.json').read_text())
+        nodes = d['definition']['nodes']
+        start = next(n for n in nodes if n['node_type'] == 'start')
+        self.assertEqual(start['config']['start_option_ref'], 'ServiceNow: get new job')
+        self.assertEqual(start['config']['start_args'],
+                         {'tag': 'okta-reset', 'version': 3, 'hand_back_group': 'Service Desk'})
+        self.assertIs(type(start['config']['start_args']['version']), int)
+        pb = next(n for n in nodes if n['node_type'] == 'playbook')
+        self.assertEqual(pb['config']['playbook_ref'], 'okta-reset')
+        comps = {n['config']['code_component_ref']: n['config']['args'] for n in nodes if n['node_type'] == 'code'}
+        self.assertEqual(comps, {'ServiceNow: complete job': {}, 'ServiceNow: hand back': {'group': 'Service Desk'}})
+
+    def test_automation_record(self):
+        rec = json.loads((self.dir / 'okta-reset.automation.json').read_text())
+        self.assertEqual(rec['version'], 3)
+        self.assertEqual(rec['spec']['name'], 'okta-reset')
+        self.assertEqual(rec['derived']['tag'], 'okta-reset')
+        self.assertEqual(rec['derived']['stamp'], 'okta-reset@3')
+        self.assertEqual(rec['derived']['scope'], SCOPE)
+
+
+class RejectTest(unittest.TestCase):
+    def assertRejected(self, spec, needle, **kw):
+        code, out, err, d = run(spec, **kw)
+        self.assertEqual(code, 1, out + err)
+        self.assertIn(needle, out + err)
+        self.assertFalse(d.exists() and any(d.rglob('*.json')), 'nothing may be written on INVALID')
+        return out + err
+
+    def test_variable_with_space_and_uppercase(self):
+        s = copy.deepcopy(FIXTURE); s['form']['variables'][0]['name'] = 'User Email'
+        self.assertRejected(s, 'User Email')
+
+    def test_reserved_stamp_variable(self):
+        s = copy.deepcopy(FIXTURE)
+        s['form']['variables'].append({'name': 'synergyai_automation', 'label': 'x', 'type': 'single_line_text'})
+        self.assertRejected(s, 'synergyai_automation')
+
+    def test_trigger_form_is_a_playbook_error(self):
+        s = copy.deepcopy(FIXTURE)
+        s['playbook']['steps'].insert(0, {'text': 'If the email is missing, #Trigger Form asking for it.'})
+        msg = self.assertRejected(s, '[playbook]')
+        self.assertTrue(any(l.strip().lstrip('- ').startswith('[playbook]') and 'Trigger Form' in l for l in msg.splitlines()), msg)
+
+    def test_bad_key(self):
+        s = copy.deepcopy(FIXTURE); s['name'] = 'Okta Reset'
+        self.assertRejected(s, 'name')
+
+    def test_no_playbook_step(self):
+        s = copy.deepcopy(FIXTURE); s['playbook']['steps'] = []
+        self.assertRejected(s, 'step')
+
+    def test_flow_errors_are_prefixed(self):
+        s = copy.deepcopy(FIXTURE); s['form']['variables'][1]['type'] = 'no_such_type'
+        self.assertRejected(s, '[flow]')
+
+    def test_bad_outcomes_and_placeholders(self):
+        s = copy.deepcopy(FIXTURE); s['outcomes'] = []; s['servicenow']['placeholders'] = {'synergyai_group': 'x'}
+        msg = self.assertRejected(s, 'outcomes')
+        self.assertIn('placeholders', msg)
+
+    def test_need_vendor_passes_through(self):
+        code, out, err, d = run(FIXTURE, extra=())
+        self.assertEqual(code, 1, out + err)
+        self.assertIn('NEED_VENDOR', out)
+        self.assertFalse((d / 'okta-reset.playbook.md').exists())
+
+    def test_missing_catalog_fails_clearly(self):
+        code, out, err, d = run(FIXTURE, extra=('--vendor', '2215723', '--catalog', '/nonexistent/mcp-catalog.md'))
+        self.assertNotEqual(code, 0)
+        self.assertIn('catalog', (out + err).lower())
+        self.assertFalse((d / 'okta-reset.playbook.md').exists())
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,0 +1,34 @@
+{
+  "name": "okta-reset",
+  "title": "Okta password reset",
+  "description": "An employee locked out of Okta orders a reset; SynergyAI unlocks the account and resets the password.",
+  "language": "en",
+  "form": {
+    "submitted_by": "An employee who is locked out of Okta.",
+    "variables": [
+      {"name": "user_email", "label": "Your work email", "type": "email", "mandatory": true},
+      {"name": "reason", "label": "What happened?", "type": "single_line_text"}
+    ]
+  },
+  "servicenow": {
+    "before": [],
+    "after": [
+      {"id": "log_closed", "label": "Log that the task is closed", "action": "log",
+       "inputs": {"log_level": "info", "log_message": "Okta password reset: task closed, flow resumed"}}
+    ]
+  },
+  "playbook": {
+    "trigger": "An employee asks for an Okta password reset.",
+    "steps": [
+      {"text": "#Search Okta Users on user_email to find the account."},
+      {"text": "#Unlock Okta User for that account."},
+      {"text": "#Reset Okta Password for that account."},
+      {"text": "#Leave Internal Note with what was done and the reason given."}
+    ],
+    "tools_used": ["Okta"]
+  },
+  "outcomes": {
+    "done": {"close_notes": "playbook summary"},
+    "failed": {"hand_back_group": "Service Desk"}
+  }
+}
