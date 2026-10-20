@@ -8,6 +8,10 @@ def one(errors, *needles):
     return hits[0]
 
 
+STAMP = {'name': 'synergyai_automation', 'label': 'SynergyAI automation', 'type': 'single_line_text',
+         'default': 'okta-reset@1', 'read_only': True, 'hidden': True}
+
+
 def ask(sid='ask_badge', variables=None, **over):
     a = {'short_description': 'Choose the badge colour', 'assignment_group': {'placeholder': 'security_group'},
          'variables': variables or [{'name': 'colour', 'label': 'Colour', 'type': 'single_line_text', 'mandatory': True}]}
@@ -214,6 +218,30 @@ class CatalogValidateTest(unittest.TestCase):
         one(errs, 'form.variables[1].reference', 'referenced table "None"')
         one(errs, 'form.variables[2]', 'needs "choices"')
         one(errs, 'form.variables[3]', 'a checkbox variable cannot be mandatory', 'yes_no')
+
+    def test_stamp_variable_validates(self):   # hidden, read-only, defaulted catalog variable (Task 7)
+        s = catalog_min()
+        s['form']['variables'].append(STAMP)
+        self.assertEqual(errors_of(s), [])
+
+    def test_variable_default_read_only_hidden_are_checked(self):
+        # fluent-vocabulary.json: every type, checkbox included, lists defaultValue/readOnly/hidden, so the
+        # type rule cannot reject them; the value types are what is checked
+        s = catalog_min()
+        s['form']['variables'] += [dict(STAMP, name='stamp_a', default=True), dict(STAMP, name='stamp_b', read_only='yes'),
+                                   dict(STAMP, name='stamp_c', hidden=1), dict(STAMP, name='stamp_d', mandatory=True)]
+        errs = errors_of(s)
+        one(errs, 'form.variables[1]', '"default" is text')
+        one(errs, 'form.variables[2]', '"read_only" is true or false')
+        one(errs, 'form.variables[3]', '"hidden" is true or false')
+        one(errs, 'form.variables[4]', 'hidden', 'mandatory')
+
+    def test_correlation_id_is_an_sc_task_field(self):
+        s = catalog_min()
+        s['steps'].append({'id': 't', 'label': 'Task', 'action': 'createCatalogTask', 'inputs': {
+            'ah_requested_item': {'pill': 'trigger.request_item'}, 'ah_short_description': 'Do it',
+            'ah_fields': {'correlation_display': 'okta-reset', 'correlation_id': 'okta-reset@1'}, 'ah_wait': True}})
+        self.assertEqual(errors_of(s), [])
 
     def test_variable_names_are_unique_on_the_item(self):
         s = with_ask(ask(variables=[{'name': 'badge_holder', 'label': 'Holder', 'type': 'single_line_text'}]))

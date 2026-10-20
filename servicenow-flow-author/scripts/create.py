@@ -715,6 +715,9 @@ def iter_steps(steps):
             yield from iter_steps(b)
 
 
+VAR_PROPS = {'default': 'defaultValue', 'read_only': 'readOnly', 'hidden': 'hidden'}   # spec key -> Fluent prop
+
+
 def add_variable(ctx: Ctx, v, owner: str, where: str, order: int) -> None:
     types = ctx.vocab['catalog']['variables']
     if not isinstance(v, dict):
@@ -734,7 +737,7 @@ def add_variable(ctx: Ctx, v, owner: str, where: str, order: int) -> None:
         return
     info = types[typ]
     extra_key = info.get('extra', {}).get('spec_key')
-    for k in sorted(set(v) - {'name', 'label', 'type', 'mandatory', 'help'} - ({extra_key} if extra_key else set())):
+    for k in sorted(set(v) - {'name', 'label', 'type', 'mandatory', 'help'} - set(VAR_PROPS) - ({extra_key} if extra_key else set())):
         ctx.err(where, f'a {typ} variable has no key "{k}"')
     if not isinstance(v.get('label'), str) or not v['label'].strip() or len(v['label']) > 200:
         ctx.err(where, 'needs a "label": the question shown on the form (1–200 characters, the user\'s language)')
@@ -744,6 +747,17 @@ def add_variable(ctx: Ctx, v, owner: str, where: str, order: int) -> None:
         ctx.err(where, f'a {typ} variable cannot be mandatory ({info["doc"]} has no "mandatory") — use yes_no for a required answer')
     if 'help' in v and not isinstance(v['help'], str):
         ctx.err(where, '"help" is text shown under the question')
+    for key, prop in VAR_PROPS.items():
+        if key not in v:
+            continue
+        if prop not in info['props']:
+            ctx.err(where, f'a {typ} variable has no "{key}" ({info["doc"]} has no "{prop}")')
+        elif key == 'default' and not isinstance(v[key], str):
+            ctx.err(where, '"default" is text: the value the question starts with')
+        elif key != 'default' and not isinstance(v[key], bool):
+            ctx.err(where, f'"{key}" is true or false')
+    if v.get('hidden') is True and v.get('mandatory'):
+        ctx.err(where, 'a variable cannot be hidden and mandatory (the docs refuse the pair) — drop one of them')
     table, extra = info.get('table'), None
     match extra_key:
         case 'reference':
@@ -759,7 +773,8 @@ def add_variable(ctx: Ctx, v, owner: str, where: str, order: int) -> None:
                 extra = ('choices', ('choices', list(ch.items())))
     ctx.variables[name] = {'name': name, 'label': v.get('label', ''), 'type': typ, 'builder': info['builder'],
                            'pill': info['pill'], 'table': table, 'extra': extra, 'mandatory': bool(v.get('mandatory')),
-                           'help': v.get('help') or '', 'owner': owner, 'where': where, 'order': order}
+                           'help': v.get('help') or '', 'default': v.get('default'),
+                           'read_only': v.get('read_only') is True, 'hidden': v.get('hidden') is True, 'owner': owner, 'where': where, 'order': order}
 
 
 def form_ir(ctx: Ctx, spec: dict) -> dict | None:
@@ -1207,6 +1222,12 @@ def variable_ts(v: dict) -> str:
     props.append(f"order: {v['order']}")
     if v['help']:
         props.append(f"helpText: {ts_str(v['help'])}")
+    if v['default'] is not None:
+        props.append(f"defaultValue: {ts_str(v['default'])}")
+    if v['read_only']:
+        props.append('readOnly: true')
+    if v['hidden']:
+        props.append('hidden: true')
     return f"{IND * 2}{v['name']}: {v['builder']}({{ {', '.join(props)} }}),"
 
 

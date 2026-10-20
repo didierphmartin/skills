@@ -57,6 +57,9 @@ A procedure that needs data from people is a catalog item. `form` describes its 
 - `variables`: `name` (snake_case, unique on the item), `label` (the question), `type` from
   `fluent-vocabulary.md` → Catalog, `mandatory`, `help`; `reference` and `list_collector` need `"reference":
   "<table>"`, `select_box` and `multiple_choice` need `"choices"`. A checkbox cannot be mandatory (use `yes_no`).
+  Optional `default` (text; Fluent `defaultValue`), `read_only` (`readOnly`) and `hidden` (`hidden`), each true/false
+  except `default`; a variable cannot be both hidden and mandatory. The SynergyAI stamp is
+  `{"name": "synergyai_automation", "label": "SynergyAI automation", "type": "single_line_text", "default": "<key>@<N>", "read_only": true, "hidden": true}`.
 - `select_box` (dropdown) and `multiple_choice` (radio buttons) take **one** answer. When the person may pick
   **several** of a fixed list ("VPN, Git, Jira…"), write one `checkbox` variable per option (`vpn`, `git`, …) and
   branch on each: `[{"pill": "form.vpn"}, "=true"]`. Several records from a table → `list_collector`.
@@ -109,6 +112,9 @@ Not inside `for_each` (one value per variable on the request).
 
 In a catalog flow, the procedure's work items are `createCatalogTask` steps:
 `{"ah_requested_item": {"pill": "trigger.request_item"}, "ah_short_description": "…", "ah_fields": {"assignment_group": {"placeholder": …}}, "ah_wait": false}`.
+`ah_fields` takes any `sc_task` field, e.g. `correlation_display` and `correlation_id` (the SynergyAI stamp `<key>@<N>`).
+`ah_wait` is `false` unless the task is assigned to the SynergyAI group: that one uses `true`, because the flow
+resumes only when SynergyAI closes it.
 
 ## Values
 

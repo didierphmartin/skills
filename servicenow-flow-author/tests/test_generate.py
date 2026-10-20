@@ -45,6 +45,16 @@ class GenerateTest(unittest.TestCase):
         # asked variables follow the form's and are never mandatory on the item (hidden + mandatory is refused by the docs)
         self.assertIn("        resolution_notes: MultiLineTextVariable({ question: 'Resolution notes', order: 1000 }),\n", self.all)
 
+    def test_stamp_variable_props(self):   # fluent-vocabulary.json catalog.variables.*.props: defaultValue, readOnly, hidden
+        from helpers import catalog_min
+        s = catalog_min()
+        s['form']['variables'].append({'name': 'synergyai_automation', 'label': 'SynergyAI automation',
+                                       'type': 'single_line_text', 'default': "okta-reset@1", 'read_only': True, 'hidden': True})
+        out = render(s)
+        self.assertIn("synergyai_automation: SingleLineTextVariable({ question: 'SynergyAI automation', order: 200, "
+                      "defaultValue: 'okta-reset@1', readOnly: true, hidden: true }),\n", out)
+        self.assertNotIn('defaultValue', render(catalog_min()))
+
     def test_ui_policies_for_asked_variables(self):   # cataloguipolicy-api.md:35-41, :96-99
         self.assertIn("CatalogUiPolicy({\n    $id: Now.ID['all_constructs__hide_asked'],\n", self.all)
         self.assertIn("    catalogItem: allConstructsItem,\n    appliesOnCatalogItemView: true,\n    appliesOnRequestedItems: false,\n"

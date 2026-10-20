@@ -49,7 +49,7 @@ context-references: references/flow-spec.md, references/fluent-vocabulary.md
 2. Write the steps in order. Each has an `id` (snake_case, unique), a `label` in the user's language, and an
    `action` with `inputs`, an `ask`, or a `logic` block; values and pills as in flow-spec.md → Values.
 3. Tasks: in a catalog flow every task is `createCatalogTask` with `"ah_requested_item": {"pill": "trigger.request_item"}`
-   and `"ah_wait": false` — never `createTask`. In a record flow a `createTask` links back to the trigger record
+   and `"ah_wait": false` — never `createTask`. Exception: a task assigned to the SynergyAI group uses `"ah_wait": true`. In a record flow a `createTask` links back to the trigger record
    (`{"pill": "trigger.current.sys_id"}` in e.g. `parent`; the script names the usable fields).
 4. Call `run_skill_script` with EXACTLY this shape (the spec travels as ONE JSON string):
    ```json
