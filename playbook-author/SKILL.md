@@ -58,6 +58,9 @@ context-references: references/syntax.md, references/mcp-catalog.md
 6. Read the report: `bound` / `UNBOUND` / `INVALID` lines. Revise (rule 3) or proceed.
 7. Call `save_playbook_agent` (rule 4). Then reply (rule 5).
 
+## ServiceNow jobs: `inputs` and `--unattended`
+When the playbook serves a ServiceNow request, add `"inputs": [{"name", "label", "type", "mandatory"}]` to the draft: the Instructions then open with a line telling the runtime which `answers` the job carries. Add `"--unattended"` to `argv` when no human will answer: every gate verb (`#Trigger Form`, `#Request Approval`, `#Prompt for Handoff`) becomes INVALID, and so does an unbound action (it would hand off to a person). Replace each with a bound action or take the facts from `inputs`. See `references/syntax.md`.
+
 ## What the script checks (so you know what "INVALID" means)
 - Title, Trigger and at least one step present.
 - Every `#Action` in the prose is under Actions used and vice versa (it derives the list for you when you omit it).

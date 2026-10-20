@@ -61,3 +61,7 @@ Add the server name only when two servers expose the same function and the scrip
 Anything that does not bind falls to the handoff policy at run time (a human takes over) — allowed, but say so.
 
 Good habits (from the four examples): end with `#Leave Internal Note` then `#Resolve Request`; put human decisions behind `#Request Approval`; collect facts with `#Trigger Form` rather than an open question; use `#Prompt for Handoff` when the request is outside the playbook; keep steps short and imperative.
+
+**ServiceNow jobs.** A draft may carry `inputs: [{name, label, type, mandatory}]`; the rendered Instructions then start with
+`The request is a ServiceNow job: its "answers" carry <name> (<type>, required|optional), ….` so steps can use those answers instead of asking.
+With `--unattended` (no human will answer) the script rejects the gate verbs `#Trigger Form`, `#Request Approval` and `#Prompt for Handoff`, and treats an unbound action as an error rather than a warning; each error names the step.
