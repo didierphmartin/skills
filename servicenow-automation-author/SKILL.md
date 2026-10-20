@@ -60,16 +60,25 @@ context-references: references/automation-spec.md
    On `VALID` the report gives one line per part (`flow:`, `playbook:`, `workflow:`, `automation:`), then
    `NEXT: save_playbook_agent then save_workflow then save_automation`, then the playbook text after
    `----- playbook -----`.
-3. `save_playbook_agent {name: <title>, description: <the Trigger line>, playbook: <the text after ----- playbook -----, verbatim>, pkey: <key>}`
-   — add `playbook_id` when step 1 returned one: that playbook is updated in place. The `pkey` must be the key: the
-   workflow finds its playbook by it.
+3. `save_playbook_agent {name: <title>, description: <the Trigger line>, playbook: <the text after ----- playbook -----, verbatim>, pkey: <key>, automation_id}`
+   — add `playbook_id` when step 1 returned one: that playbook is updated in place. The `pkey` is ALWAYS the
+   automation key (the workflow finds its playbook by it): a playbook that already holds it is updated in place
+   when no automation or this one manages it. On `automation_key_taken` ("key taken by automation <title>"),
+   another automation owns the key: stop, pick a NEW automation key, and regenerate everything with it from step 1
+   (`save_automation`, `create.py`, `save_playbook_agent`, `save_workflow`). Never save the playbook under another
+   `pkey` alone.
 4. `save_workflow {path: "/outputs/<key>.workflow.json", automation_id}` — add `workflow_id` when step 1 returned
-   one: that workflow is updated in place (an active one is stopped and started again).
+   one: that workflow is updated in place (an active one is stopped and started again). It also arms the Start
+   option (`start_option.armed`), so ▶ can start the workflow; when it is not armed, tell the user to tick the
+   Start option on the workflow's Start node before ▶.
 5. `save_automation {key, title, spec, playbook_id, workflow_id}` with the ids from steps 3 and 4 and the final spec
    (as last run, after any revision) — the record now links every part.
 6. Install: pick a server from `save_automation`'s `servers` whose `environment` is `dev` or `test`, and call
    `install_automation {automation_id, server_id, scope}` (the scope from the `flow:` line); no such server, or a
-   refusal, means a manual install. Then reply with rule 7's lines.
+   refusal, means a manual install. When it answers with `placeholders` (the app still has `PLACEHOLDER:<name>`
+   values), nothing was installed: ask the user for those values, put them in the spec
+   (`servicenow.placeholders: {"<name>": {"value": "…"}}`), re-run `create.py` with the same `--version`, save the
+   playbook and workflow again (steps 3–5), then call `install_automation` again. Then reply with rule 7's lines.
 
 ## Regenerating
 

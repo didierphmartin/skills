@@ -7,8 +7,14 @@ FIXTURE = json.loads((HERE / 'fixtures' / 'okta-reset.json').read_text())
 SCOPE = 'x_2215723_synergy'
 
 
+CATALOG = HERE / 'fixtures' / 'mcp-catalog.md'
+
+
 def run(spec, version=3, extra=('--vendor', '2215723')):
-    """Run create.py on `spec` with --out a fresh tempdir; return (code, stdout, stderr, out dir)."""
+    """Run create.py on `spec` with --out a fresh tempdir; return (code, stdout, stderr, out dir).
+    The MCP catalog is the fixture's (tests/fixtures/mcp-catalog.md) unless `extra` names another."""
+    if '--catalog' not in extra:
+        extra = (*extra, '--catalog', str(CATALOG))
     td = tempfile.mkdtemp()
     unittest.addModuleCleanup(shutil.rmtree, td, ignore_errors=True)
     i = Path(td) / 'spec.json'
