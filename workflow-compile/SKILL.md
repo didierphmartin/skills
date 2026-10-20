@@ -88,6 +88,13 @@ The user then imports the DSL into the workflow editor (or, later, the skill wil
 - Every agent must be **reachable from `"start"`** AND have a **path to `"output"`** — no orphans, no dead branches.
 - At least one edge must end at `"output"`.
 
+### Playbook and component nodes, Start option, named exits
+
+- `{"id","kind":"playbook","playbook":"<key>","name"?}` runs a playbook; it needs no provider, instructions or tools (`tools` is an error). Its exits are `done` and `failed`.
+- `{"id","kind":"component","component":"<name>","args"?:{}}` runs a code component. Its exits are not checked here.
+- `start` may carry `"option":"<component name>"` and `"args":{}` instead of a prompt (arg JSON types are kept).
+- A flow source may be `"<id>.<exit>"`, e.g. `["pb.failed","back"]`; plain `"<id>"` uses the default port.
+
 ### Fan-out and fan-in
 
 - **Fan-out (parallel execution)**: multiple edges from the same source. Example: `["start","crypto"], ["start","pubmed"]` → both agents run in parallel after start.

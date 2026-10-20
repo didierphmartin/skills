@@ -38,6 +38,21 @@ ALLOWED_PROVIDERS = {
 FORMAT_SKILL = {"pdf": "report-pdf", "html": "html", "docx": "docx", "md": None}
 ALLOWED_FORMATS = set(FORMAT_SKILL)
 
+PLAYBOOK_EXITS = ("done", "failed")
+KINDS = ("agent", "playbook", "component")
+
+
+def _split_endpoint(ep):
+    """'a.x' -> ('a', 'x'); 'a' -> ('a', None). Non-strings pass through."""
+    if isinstance(ep, str) and "." in ep:
+        base, exit_name = ep.split(".", 1)
+        return base, exit_name
+    return ep, None
+
+
+def _kind(a) -> str:
+    return (a.get("kind") or "agent") if isinstance(a, dict) else "agent"
+
 
 def validate_output(simple: dict) -> list[str]:
     """Validate the optional top-level `output` block. Never raises — errors aggregated."""
@@ -180,8 +195,16 @@ def validate_schema(simple: dict) -> tuple[list[str], list[dict], list[list[str]
         errors.append('root: missing required field "name" (non-empty string)')
 
     start = simple.get("start")
-    if not isinstance(start, dict) or not _is_nonempty_str(start.get("prompt")):
+    if not isinstance(start, dict):
         errors.append('root: missing required field "start.prompt" (non-empty string)')
+    else:
+        has_option = start.get("option") is not None
+        if has_option and not _is_nonempty_str(start.get("option")):
+            errors.append('start.option must be a non-empty string (a component name)')
+        if start.get("args") is not None and not isinstance(start.get("args"), dict):
+            errors.append('start.args must be an object')
+        if not has_option and not _is_nonempty_str(start.get("prompt")):
+            errors.append('root: missing required field "start.prompt" (non-empty string)')
 
     agents = simple.get("agents")
     if not isinstance(agents, list) or len(agents) == 0:
@@ -207,6 +230,28 @@ def validate_schema(simple: dict) -> tuple[list[str], list[dict], list[list[str]
             errors.append(f"agents[{i}]: duplicate id {aid!r}")
         else:
             seen_ids.add(aid)
+        kind = _kind(a)
+        if kind not in KINDS:
+            errors.append(
+                f"agents[{i}] {aid!r}: kind {kind!r} is not one of: " + ", ".join(KINDS)
+            )
+            continue
+        if kind == "playbook":
+            if not _is_nonempty_str(a.get("playbook")):
+                errors.append(f'agents[{i}] {aid!r}: playbook node needs "playbook" (non-empty string)')
+            for bad in ("tools", "provider", "instructions"):
+                if a.get(bad):
+                    errors.append(
+                        f'agents[{i}] {aid!r}: playbook node cannot have "{bad}" '
+                        f'(the playbook defines its own)'
+                    )
+            continue
+        if kind == "component":
+            if not _is_nonempty_str(a.get("component")):
+                errors.append(f'agents[{i}] {aid!r}: component node needs "component" (non-empty string)')
+            if a.get("args") is not None and not isinstance(a.get("args"), dict):
+                errors.append(f'agents[{i}] {aid!r}: "args" must be an object')
+            continue
         if not _is_nonempty_str(a.get("name")):
             errors.append(f'agents[{i}] {aid!r}: missing required field "name"')
         provider = a.get("provider")
@@ -230,6 +275,7 @@ def validate_schema(simple: dict) -> tuple[list[str], list[dict], list[list[str]
             )
 
     valid_targets = seen_ids | {"start", "output"}
+    kinds = {a.get("id"): _kind(a) for a in agents if isinstance(a, dict)}
     for i, edge in enumerate(flow):
         if not (isinstance(edge, list) and len(edge) == 2):
             errors.append(f"flow[{i}]: must be a [from, to] pair, got {edge!r}")
@@ -238,6 +284,20 @@ def validate_schema(simple: dict) -> tuple[list[str], list[dict], list[list[str]
         if not _is_nonempty_str(f) or not _is_nonempty_str(t):
             errors.append(f"flow[{i}]: both endpoints must be non-empty strings")
             continue
+        f_full = f
+        f, exit_name = _split_endpoint(f)
+        if exit_name is not None:
+            k = kinds.get(f)
+            if k == "playbook":
+                if exit_name not in PLAYBOOK_EXITS:
+                    errors.append(
+                        f"flow[{i}]: playbook {f!r} has no exit {exit_name!r}; "
+                        f"use one of: " + ", ".join(PLAYBOOK_EXITS)
+                    )
+            elif k != "component":
+                errors.append(
+                    f"flow[{i}]: {f_full!r}: only playbook and component nodes have named exits"
+                )
         if f == t:
             errors.append(f"flow[{i}]: self-loop {f!r} -> {t!r} not allowed")
         if f not in valid_targets:
@@ -268,6 +328,7 @@ def validate_graph(agent_ids: list[str], flow: list[list[str]]) -> list[str]:
         f, t = edge
         if not (isinstance(f, str) and isinstance(t, str)):
             continue
+        f = _split_endpoint(f)[0]
         if f not in valid_nodes or t not in valid_nodes:
             continue
         clean_flow.append((f, t))
@@ -397,6 +458,10 @@ def build_start_node(node_id: str, simple: dict, position: dict) -> dict:
             "type": "start",
             "prompt": s.get("prompt", ""),
             "documents": s.get("documents", []),
+            **(
+                {"start_option_ref": s["option"], "start_args": s.get("args") or {}}
+                if s.get("option") else {}
+            ),
         },
         "position": position,
         "pos_x": position["x"],
@@ -475,6 +540,50 @@ def build_agent_node(node_id: str, agent: dict, position: dict) -> dict:
     }
 
 
+def build_playbook_node(node_id: str, agent: dict, position: dict) -> dict:
+    name = agent.get("name") or agent["playbook"]
+    return {
+        "id": node_id,
+        "node_type": "playbook",
+        "type": "playbook",
+        "agent_id": None,
+        "agent_name": name,
+        "config": {
+            "type": "playbook",
+            "node_type": "playbook",
+            "name": name,
+            "playbook_ref": agent["playbook"],
+            "exits": list(PLAYBOOK_EXITS),
+            "writes_enabled": True,
+            "agent_provider": "claude",
+            "mcp_servers": [],
+        },
+        "position": position,
+        "pos_x": position["x"],
+        "pos_y": position["y"],
+    }
+
+
+def build_component_node(node_id: str, agent: dict, position: dict) -> dict:
+    name = agent.get("name") or agent["component"]
+    return {
+        "id": node_id,
+        "node_type": "code",
+        "type": "code",
+        "agent_id": None,
+        "agent_name": name,
+        "config": {
+            "type": "code",
+            "name": name,
+            "code_component_ref": agent["component"],
+            "args": agent.get("args") or {},
+        },
+        "position": position,
+        "pos_x": position["x"],
+        "pos_y": position["y"],
+    }
+
+
 def compile_workflow(simple: dict) -> dict:
     schema_errors, agents, flow = validate_schema(simple)
 
@@ -512,7 +621,8 @@ def compile_workflow(simple: dict) -> dict:
 
     declaration_order = ["start", *agent_ids, "output"]
     node_ids = list(declaration_order)
-    levels = compute_levels(node_ids, flow)
+    base_flow = [[_split_endpoint(f)[0], t] for f, t in flow]
+    levels = compute_levels(node_ids, base_flow)
     positions = compute_positions(node_ids, levels, declaration_order)
 
     # Numeric DSL ids in declaration order: 1=start, 2..N+1=agents, N+2=output.
@@ -525,20 +635,27 @@ def compile_workflow(simple: dict) -> dict:
     out_cfg = simple.get("output") or {}
     formatter = FORMAT_SKILL.get(out_cfg.get("format", "md"))
     if formatter:
-        terminal_ids = {f for f, t in flow if t == "output"}
+        terminal_ids = {f for f, t in base_flow if t == "output"}
         for a in agents:
-            if isinstance(a, dict) and a.get("id") in terminal_ids and not a.get("skill_binding"):
+            if isinstance(a, dict) and _kind(a) == "agent" and a.get("id") in terminal_ids and not a.get("skill_binding"):
                 a["skill_binding"] = formatter
 
     nodes = [build_start_node(dsl_id["start"], simple, positions["start"])]
     for a in agents:
-        nodes.append(build_agent_node(dsl_id[a["id"]], a, positions[a["id"]]))
+        builder = {"playbook": build_playbook_node,
+                   "component": build_component_node}.get(_kind(a), build_agent_node)
+        nodes.append(builder(dsl_id[a["id"]], a, positions[a["id"]]))
     nodes.append(build_output_node(dsl_id["output"], positions["output"]))
 
-    edges = [
-        {"from": dsl_id[f], "to": dsl_id[t], "from_port": "output_1"}
-        for f, t in flow
-    ]
+    edges = []
+    for f, t in flow:
+        base, exit_name = _split_endpoint(f)
+        e = {"from": dsl_id[base], "to": dsl_id[t]}
+        if exit_name is not None:
+            e["from_port_name"] = exit_name
+        else:
+            e["from_port"] = "output_1"
+        edges.append(e)
 
     return {
         "name": simple["name"],
@@ -554,13 +671,13 @@ def compile_workflow(simple: dict) -> dict:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description="Compile a simplified workflow JSON into the full Workflow DSL."
     )
     p.add_argument("-i", "--input", required=True, help="path to simplified workflow JSON")
     p.add_argument("-o", "--output", required=True, help="path to write the DSL JSON")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     try:
         simple = json.loads(Path(args.input).read_text())
