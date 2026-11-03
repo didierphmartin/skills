@@ -101,6 +101,39 @@ dependencies: [fpdf2, pillow]
 
 Single dep can be a bare value: `dependencies: pyyaml`. Multiple deps use list syntax.
 
+### Declare every other skill it uses in `requires-skills:` (ENFORCED)
+
+Importing a skill imports **all** its dependencies — the Python libraries above AND every other skill it needs.
+If the new skill's scripts load another skill's script or read another skill's files (for example
+`load_script('playbook-author', 'create.py')`, or `playbook-author/references/mcp-catalog.md`), the SKILL.md
+frontmatter MUST list that skill:
+
+```yaml
+---
+name: my-automation
+description: ...
+dependencies: []
+requires-skills: [playbook-author, workflow-compile]
+---
+```
+
+**This is enforced** — `create_skill.py` rejects the call when a file under `scripts/` names another installed
+skill (its folder name in quotes, or as a `/name/` path segment) that `requires-skills:` does not list. The error
+gives the exact line to add. List only skills the scripts really use; a skill mentioned only in the description
+("do not use for …") is not a dependency.
+
+Find other skills through the skills folder the runtime provides, never a hard-coded home path:
+
+```python
+import os, sys
+from pathlib import Path
+SKILLS_ROOT = Path(os.environ.get('SYNERGYAI_SKILLS_DIR')
+                   or ('/skills-root' if sys.platform == 'emscripten' else Path.home() / 'Documents' / 'synergyAI' / 'skills'))
+```
+
+`SYNERGYAI_SKILLS_DIR` is set by compiled programs to their own `skills/` folder, so the skill keeps working
+when it runs outside the editor.
+
 ### Pyodide is a SUBSET of PyPI — not everything works
 
 Before adding a library to `dependencies:`, mentally check it against this:

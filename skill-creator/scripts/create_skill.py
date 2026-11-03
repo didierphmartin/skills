@@ -40,6 +40,8 @@ Enforcement before any write to `/skills-root/`:
   - SKILL.md declares a `dependencies:` field (even `[]`)
   - Every non-stdlib import across the tree's .py files appears in `dependencies:`
   - No declared dep is on the Pyodide-incompatible list (see PYODIDE_INCOMPATIBLE)
+  - Every other installed skill the scripts use (its folder name quoted or as a /path/ segment)
+    is declared in `requires-skills:` — importing a skill imports the skills it requires
 
 Refuses to overwrite an existing skill folder unless --overwrite is passed.
 """
@@ -297,6 +299,67 @@ def _validate_dependencies_and_imports(
     return None
 
 
+def _parse_requires_field(skill_md: str) -> list[str]:
+    """Read `requires-skills:` from the frontmatter (same forms as `dependencies:`); absent → []."""
+    end_idx = skill_md.find("\n---", 3)
+    frontmatter = skill_md[: end_idx if end_idx != -1 else len(skill_md)]
+    m = re.search(r"^requires-skills:\s*(.*)$", frontmatter, re.MULTILINE)
+    if not m:
+        return []
+    raw = m.group(1).strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    return [p.strip().strip("'\"") for p in raw.split(",") if p.strip()]
+
+
+def _installed_skill_names(root: Path, exclude: str) -> set[str]:
+    """Leaf folder names of the skills under `root` (top level and one group level down)."""
+    names: set[str] = set()
+    if not root.is_dir():
+        return names
+    for d in root.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        if (d / "SKILL.md").is_file():
+            names.add(d.name)
+            continue
+        for sub in d.iterdir():
+            if sub.is_dir() and (sub / "SKILL.md").is_file():
+                names.add(sub.name)
+    names.discard(exclude)
+    return names
+
+
+def _validate_required_skills(name: str, skill_md: str, other_files: dict[str, str], root: Path):
+    """Every OTHER skill the new skill's scripts reference must be declared in `requires-skills:`.
+
+    A reference is another installed skill's folder name quoted ('x' / "x") or used as a path segment (/x/)
+    in any file under scripts/. Importing a skill imports the skills it requires, so an undeclared one would
+    be missing wherever the skill is imported. Returns (error | None, warnings).
+    """
+    installed = _installed_skill_names(root, name)
+    declared = set(_parse_requires_field(skill_md))
+    referenced: dict[str, str] = {}
+    for rel, text in other_files.items():
+        if not rel.startswith("scripts/"):
+            continue
+        for other in installed:
+            if other in referenced:
+                continue
+            if re.search(r"""(['"])""" + re.escape(other) + r"""\1|/""" + re.escape(other) + r"/", text):
+                referenced[other] = rel
+    missing = sorted(set(referenced) - declared)
+    warnings = [f"`requires-skills:` lists {s!r}, which is not installed here — "
+                f"it must be installed wherever this skill is imported." for s in sorted(declared - installed)]
+    if missing:
+        found = "; ".join(f"{s} (in {referenced[s]})" for s in missing)
+        want = ", ".join(sorted(declared | set(missing)))
+        return (f"the new skill's scripts use other skills that SKILL.md does not declare: {found}. "
+                f"Add to the frontmatter: `requires-skills: [{want}]` — importing a skill imports the "
+                f"skills it requires, so every one it uses must be listed."), warnings
+    return None, warnings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--name", required=True, help="Kebab-case name of the new skill. The source tree must already be at /scratch/<name>/.")
@@ -369,6 +432,13 @@ def main() -> int:
     err = _validate_dependencies_and_imports(skill_md, other_files)
     if err:
         return _fail(err)
+
+    # Enforce: every other skill the scripts use is declared in requires-skills.
+    err, warnings = _validate_required_skills(name, skill_md, other_files, SKILLS_ROOT)
+    if err:
+        return _fail(err)
+    for w in warnings:
+        print(f"⚠️  WARNING: {w}", file=sys.stderr)
 
     if not SKILLS_ROOT.exists():
         return _fail(
