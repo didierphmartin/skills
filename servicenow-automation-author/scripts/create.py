@@ -21,10 +21,11 @@ Exit 2  the spec cannot be read, or a sibling skill / the MCP catalog cannot be 
 Standard library only: it runs in the app's browser Pyodide; the other skills' scripts are imported, not spawned.
 """
 from __future__ import annotations
-import argparse, contextlib, copy, importlib.util, io, json, re, shutil, sys, tempfile
+import argparse, contextlib, copy, importlib.util, io, json, os, re, shutil, sys, tempfile
 from pathlib import Path
 
-SKILLS_ROOT = Path('/skills-root' if sys.platform == 'emscripten' else Path.home() / 'Documents' / 'synergyAI' / 'skills')
+# A compiled program sets SYNERGYAI_SKILLS_DIR to its own skills/ folder (the skills this one needs travel with it).
+SKILLS_ROOT = Path(os.environ.get('SYNERGYAI_SKILLS_DIR') or ('/skills-root' if sys.platform == 'emscripten' else Path.home() / 'Documents' / 'synergyAI' / 'skills'))
 KEY_RE = re.compile(r'^[a-z0-9][a-z0-9-]{1,40}$')
 VAR_RE = re.compile(r'^[a-z][a-z0-9_]{0,39}$')
 STAMP_VAR = 'synergyai_automation'
