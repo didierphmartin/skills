@@ -2,6 +2,7 @@
 name: workflow-compile
 description: "Compile a multi-agent workflow FROM INTENT into the Workflow DSL the engine runs. USE scripts/compile.py whenever a request decomposes into multiple steps or independent sources — EVEN IF the user never says 'workflow' or 'agents'. Triggers: 'research X and Y [in parallel] then combine/synthesize', 'gather from several sources and produce a report/PDF', 'do A then B then C', 'fan out to researchers and merge', any research→write→publish pipeline. RECOGNIZE PARALLELISM: when things are looked up independently then merged, emit MULTIPLE edges from 'start' (fan-out) into a synthesizer (fan-in) — don't chain them. You author compact JSON (start prompt + inline agents + flow edges); compile.py validates (DAG, reachability, providers, MCP allowlist) and writes the DSL to /outputs/. Reserved ids 'start'/'output'. Do NOT use for: editing one agent's prompt, running a workflow (emits the spec only), or non-workflow JSON."
 license: MIT
+requires-skills: []
 metadata:
   version: 0.1.0
   origin: synergyAI custom

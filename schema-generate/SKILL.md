@@ -2,6 +2,7 @@
 name: schema-generate
 description: "Generate ready-to-paste JSON-LD structured-data markup for a web page. Use for: 'generate schema', 'add JSON-LD to my page', 'schema markup for [Article/Organization/LocalBusiness/Product/Event]', 'fix my structured data', 'create rich-results markup'. Pipeline: fetch page → detect type from existing JSON-LD, URL pattern (/blog, /products, /about, /contact), OG type, headings → auto-fill fields from page content (title, meta description, author, dates, og:image, canonical) → mark unknowns as [PLACEHOLDER] → emit valid JSON-LD ready to paste in <head>. 22 templates: 11 common (Article, BlogPosting, NewsArticle, Organization, LocalBusiness, Person, WebSite, WebPage, BreadcrumbList, ContactPage, Event) + 11 specialized (VideoObject, BroadcastEvent, Product, ProfilePage, ItemList, etc.). Refuses deprecated types (HowTo, SpecialAnnouncement, CourseInfo). Warns on restricted types (FAQPage on commercial sites). Companion to ai-search-audit."
 dependencies: [beautifulsoup4]
+requires-skills: []
 fetches_urls: false
 ---
 

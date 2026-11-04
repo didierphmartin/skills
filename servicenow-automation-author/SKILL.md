@@ -2,6 +2,7 @@
 name: servicenow-automation-author
 description: "Create a SynergyAI AUTOMATION: something people order in the ServiceNow catalog and SynergyAI fulfils. From one prompt it makes both halves in sync — the ServiceNow catalog item + flow that hands a task to SynergyAI, and the SynergyAI playbook + workflow that do the work and close the task or hand it back. USE THIS whenever the user asks to 'let employees order X in ServiceNow and have SynergyAI do it', 'automate this ServiceNow request with SynergyAI', 'create/regenerate the <key> automation'. You write ONE automation spec; scripts/create.py derives the flow spec, the playbook and the workflow from it, and you save them. Do NOT use for: a ServiceNow flow that SynergyAI does not fulfil (servicenow-flow-author), a playbook alone (playbook-author), a workflow alone (workflow-compile)."
 license: MIT
+requires-skills: [playbook-author, servicenow-flow-author, workflow-compile]
 metadata:
   version: 0.1.0
   origin: synergyAI custom
