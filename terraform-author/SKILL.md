@@ -30,7 +30,7 @@ context-references: references/infra-spec.md, references/catalog.md
    values are never in the spec: a `secret` component's value is typed by the user at apply time.
 6. **Map, don't invent.** Something catalog.md lists as out of v1 (a VM, MySQL, a custom domain, …) is never a
    component: put its name in `"left_out"` and say so in line 6 of your reply.
-7. **Your reply IS these lines, in this order, in the user's language — nothing else** (no design notes, resource
+7. **Your reply IS these lines, in this order, in the language of the user's latest message (never one inferred from memory or profile) — nothing else** (no design notes, resource
    lists or prerequisites — those are in the project README and `references/deploy.md`):
    ```
    ✅ <title> — Terraform for <AWS|Azure> (<region>).
