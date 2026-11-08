@@ -60,6 +60,51 @@ several places: the script does it, so they cannot differ.
 
 No `version`: it comes from `save_automation` and is passed as `--version N`.
 
+## Playbook action names
+
+An action is `#` + Capitalised Words naming the MCP function; a lowercase word or a `:` ends it, so
+`#Add User to Okta Group` is read as `#Add User` and does not bind. Use the function's words, plus the server name
+when two servers have the same function (Okta and Google Workspace both have `add_to_group`):
+
+| function | write |
+|---|---|
+| Okta `add_to_group` / Google Workspace `add_to_group` | `#Add To Group Okta` / `#Add To Group Google Workspace` |
+| Okta `search_users`, `lookup_users`, `get_group_members` | `#Search Okta Users`, `#Lookup Users`, `#Get Group Members` |
+| GitHub `add_user_to_team`, `remove_user_from_team` | `#Add User To Team`, `#Remove User From Team` |
+| Slack `search_channels`, `invite_to_channel`, `remove_user_from_channel` | `#Search Channels`, `#Invite To Channel`, `#Remove User From Channel` |
+| Google Calendar `create_event` | `#Create Event` |
+
+Messages and notes are native verbs and always bind: `#Send Direct Message`, `#Send Email`, `#Leave Internal Note`.
+A step with no MCP function (no connector) cannot run unattended: leave it out of the steps and say in
+`#Leave Internal Note` that it is left for the hand-back group.
+
+## Approvals
+
+People approve in ServiceNow, before SynergyAI gets the task: `servicenow.before` holds one `askForApproval` per
+approver and, after each, an `if` that ends the flow unless it was approved. A rejected request never reaches
+SynergyAI. Approvers are `sys_user` records, so the form has a `reference` variable for them (dot-walk for a
+manager: `form.employee.manager`). A reference answer reaches SynergyAI as a sys_id, so a person the playbook acts
+on in Okta, GitHub or Slack also needs an `email` variable. Two approvals, the current manager then the new one:
+
+```json
+"before": [
+  {"id": "approve_current", "label": "The current manager approves", "action": "askForApproval",
+   "inputs": {"record": {"pill": "trigger.request_item"}, "table": "sc_req_item",
+              "approval_reason": "Approve the team transfer",
+              "approval_conditions": {"rule": "Any", "users": [{"pill": "form.employee.manager"}]}}},
+  {"id": "stop_current", "label": "Not approved by the current manager?", "logic": "if",
+   "condition": [{"pill": "approve_current.approval_state"}, "!=approved"],
+   "steps": [{"id": "end_current", "label": "Stop: transfer not approved", "logic": "end"}]},
+  {"id": "approve_new", "label": "The new team's manager approves", "action": "askForApproval",
+   "inputs": {"record": {"pill": "trigger.request_item"}, "table": "sc_req_item",
+              "approval_reason": "Approve the team transfer",
+              "approval_conditions": {"rule": "Any", "users": [{"pill": "form.new_manager"}]}}},
+  {"id": "stop_new", "label": "Not approved by the new manager?", "logic": "if",
+   "condition": [{"pill": "approve_new.approval_state"}, "!=approved"],
+   "steps": [{"id": "end_new", "label": "Stop: transfer not approved", "logic": "end"}]}
+]
+```
+
 ## Rules the script checks
 
 - `name` matches the key regex; `title`, `description`, `form.submitted_by`, `playbook.trigger` are set.

@@ -1,0 +1,172 @@
+{
+  "name": "team-transfer",
+  "title": "Team transfer",
+  "description": "A manager moves a report to another team; both managers approve in ServiceNow, then SynergyAI moves the person's access and sets up a welcome meeting.",
+  "language": "en",
+  "form": {
+    "submitted_by": "The employee's current manager.",
+    "variables": [
+      {
+        "name": "employee",
+        "label": "Who is moving",
+        "type": "reference",
+        "reference": "sys_user",
+        "mandatory": true
+      },
+      {
+        "name": "employee_email",
+        "label": "Their work email",
+        "type": "email",
+        "mandatory": true
+      },
+      {
+        "name": "new_manager",
+        "label": "Manager of the new team",
+        "type": "reference",
+        "reference": "sys_user",
+        "mandatory": true
+      },
+      {
+        "name": "new_manager_email",
+        "label": "New manager's work email",
+        "type": "email",
+        "mandatory": true
+      },
+      {
+        "name": "current_team",
+        "label": "Current team",
+        "type": "single_line_text",
+        "mandatory": true
+      },
+      {
+        "name": "new_team",
+        "label": "New team",
+        "type": "single_line_text",
+        "mandatory": true
+      },
+      {
+        "name": "effective_date",
+        "label": "Effective date",
+        "type": "date",
+        "mandatory": true
+      }
+    ]
+  },
+  "servicenow": {
+    "before": [
+      {
+        "id": "approve_current",
+        "label": "The current manager approves",
+        "action": "askForApproval",
+        "inputs": {
+          "record": {
+            "pill": "trigger.request_item"
+          },
+          "table": "sc_req_item",
+          "approval_reason": "Approve the team transfer",
+          "approval_conditions": {
+            "rule": "Any",
+            "users": [
+              {
+                "pill": "form.employee.manager"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "stop_current",
+        "label": "Not approved by the current manager?",
+        "logic": "if",
+        "condition": [
+          {
+            "pill": "approve_current.approval_state"
+          },
+          "!=approved"
+        ],
+        "steps": [
+          {
+            "id": "end_current",
+            "label": "Stop: transfer not approved",
+            "logic": "end"
+          }
+        ]
+      },
+      {
+        "id": "approve_new",
+        "label": "The new team's manager approves",
+        "action": "askForApproval",
+        "inputs": {
+          "record": {
+            "pill": "trigger.request_item"
+          },
+          "table": "sc_req_item",
+          "approval_reason": "Approve the team transfer",
+          "approval_conditions": {
+            "rule": "Any",
+            "users": [
+              {
+                "pill": "form.new_manager"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "stop_new",
+        "label": "Not approved by the new manager?",
+        "logic": "if",
+        "condition": [
+          {
+            "pill": "approve_new.approval_state"
+          },
+          "!=approved"
+        ],
+        "steps": [
+          {
+            "id": "end_new",
+            "label": "Stop: transfer not approved",
+            "logic": "end"
+          }
+        ]
+      }
+    ]
+  },
+  "playbook": {
+    "trigger": "A manager moves one of their reports to another team; both managers have approved.",
+    "steps": [
+      {
+        "text": "#Add To Group Okta: add employee_email to the new_team group."
+      },
+      {
+        "text": "#Add User To Team in GitHub for new_team, then #Remove User From Team for current_team."
+      },
+      {
+        "text": "#Search Channels for the new_team and current_team channels, then #Invite To Channel for the new one and #Remove User From Channel for the old one."
+      },
+      {
+        "text": "#Create Event: a 30-minute welcome meeting between employee_email and new_manager_email on effective_date."
+      },
+      {
+        "text": "#Send Direct Message to employee_email and to new_manager_email with what changed."
+      },
+      {
+        "text": "#Leave Internal Note with every system touched; the old Okta group is left for the Service Desk (no connector)."
+      }
+    ],
+    "tools_used": [
+      "Okta",
+      "GitHub",
+      "Slack",
+      "Google Calendar"
+    ]
+  },
+  "outcomes": {
+    "done": {
+      "close_notes": "playbook summary"
+    },
+    "failed": {
+      "hand_back_group": "Service Desk"
+    }
+  }
+}

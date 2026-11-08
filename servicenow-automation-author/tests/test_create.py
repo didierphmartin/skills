@@ -179,5 +179,41 @@ class RejectTest(unittest.TestCase):
         self.assertFalse((d / 'okta-reset.playbook.md').exists())
 
 
+REAL_CATALOG = HERE.parent.parent / 'playbook-author' / 'references' / 'mcp-catalog.md'
+TEAM_TRANSFER = json.loads((HERE / 'fixtures' / 'team-transfer.json').read_text())
+
+
+class DocumentedExamplesTest(unittest.TestCase):
+    """What references/automation-spec.md tells the model to copy must pass as written."""
+
+    def test_documented_approvals_are_the_fixtures_and_valid(self):
+        doc = (HERE.parent / 'references' / 'automation-spec.md').read_text()
+        block = re.search(r'```json\n("before": \[.*?\n\])\n```', doc, re.S)
+        self.assertIsNotNone(block, 'the two-approval example is missing from automation-spec.md')
+        self.assertEqual(json.loads('{' + block.group(1) + '}')['before'], TEAM_TRANSFER['servicenow']['before'])
+        code, out, err, d = run(TEAM_TRANSFER, version=1, extra=('--vendor', '2215723', '--catalog', str(REAL_CATALOG)))
+        self.assertEqual(code, 0, out + err)
+        self.assertIn('0 unbound', out)
+        flow = json.loads((d / 'servicenow' / SCOPE / 'flow-specs' / 'team-transfer.json').read_text())
+        self.assertEqual([s.get('action') for s in flow['steps'][:4:2]], ['askForApproval', 'askForApproval'])
+
+    def test_documented_action_names_bind(self):
+        sys.path.insert(0, str(REAL_CATALOG.parent.parent / 'scripts'))
+        try:
+            import create as pb
+        finally:
+            sys.path.pop(0)
+        tools, _ = pb.load_catalog(str(REAL_CATALOG))
+        doc = (HERE.parent / 'references' / 'automation-spec.md').read_text()
+        table = doc.split('## Playbook action names', 1)[1].split('## Approvals', 1)[0]
+        rows = '\n'.join(line for line in table.splitlines() if line.startswith('|'))   # not the counterexamples
+        names = re.findall(r'`(#[A-Z][^`]*)`', rows)
+        self.assertGreaterEqual(len(names), 10)
+        for name in names:
+            if name.lower() in pb.NATIVE_VERBS:
+                continue
+            self.assertIsNotNone(pb.auto_bind(name, tools)[0], name)
+
+
 if __name__ == '__main__':
     unittest.main()

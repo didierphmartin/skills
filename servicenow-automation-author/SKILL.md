@@ -23,10 +23,16 @@ context-references: references/automation-spec.md
    comes from: `[automation]` the spec itself, `[flow]` servicenow-flow-author, `[playbook]` playbook-author,
    `[workflow]` workflow-compile. Fix all of them in one revision of the spec and run again. **At most two
    revisions**; then tell the user what remains. Exit 2: the spec or the argv could not be read — resend the exact
-   call shape (step 2). Nothing is written unless every part is VALID.
+   call shape (step 2). Nothing is written unless every part is VALID. When the user answers "go on" after that,
+   revise the same spec and run `create.py` again with the version you already have: `save_automation` is called
+   once per automation until it is saved (every call adds a version). Never hand the spec to the user to run, and
+   never drop what the user asked for (an approval, a notification, a system) just to get VALID.
 4. **The playbook runs unattended**: no `#Trigger Form`, `#Request Approval` or `#Prompt for Handoff`, and every
    action must bind to an MCP tool. The data a person gives goes in `form.variables` (the playbook reads them from
-   the job's `answers`); an approval goes in `servicenow.before`.
+   the job's `answers`); an approval goes in `servicenow.before` (copy the example in `automation-spec.md`).
+   Write action names in Capitalised Words after the MCP function (`#Add User To Team`, `#Add To Group Okta`):
+   a lowercase word or a `:` ends the name. An `[playbook] … is unbound` problem gives the name to write, or the
+   closest functions: use them as given.
 5. **Company code.** `NEED_VENDOR` (exit 1) means the ServiceNow app's company code is unknown: ask the user once
    (in ServiceNow Studio, the prefix shown when creating an app, e.g. x_1234567), then run the same call with
    `"--vendor", "<code>"` added.
