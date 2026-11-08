@@ -25,8 +25,9 @@ def load_module():
 
 
 def load_real_catalog():
-    """The shipped catalog: Okta and Google Workspace both have add_to_group, GitHub has add_user_to_team."""
-    return load_module().load_catalog(str(HERE.parent / 'references' / 'mcp-catalog.md'))
+    """A snapshot of the app-generated catalog (references/mcp-catalog.md is gitignored, so a fresh clone
+    has none): Okta and Google Workspace both have add_to_group, GitHub has add_user_to_team."""
+    return load_module().load_catalog(str(HERE / 'fixtures' / 'mcp-catalog-snapshot.md'))
 
 
 BASE = {

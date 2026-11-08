@@ -179,7 +179,8 @@ class RejectTest(unittest.TestCase):
         self.assertFalse((d / 'okta-reset.playbook.md').exists())
 
 
-REAL_CATALOG = HERE.parent.parent / 'playbook-author' / 'references' / 'mcp-catalog.md'
+# A snapshot of the app-generated catalog (the live references/mcp-catalog.md is gitignored).
+REAL_CATALOG = HERE.parent.parent / 'playbook-author' / 'tests' / 'fixtures' / 'mcp-catalog-snapshot.md'
 TEAM_TRANSFER = json.loads((HERE / 'fixtures' / 'team-transfer.json').read_text())
 
 
@@ -198,7 +199,7 @@ class DocumentedExamplesTest(unittest.TestCase):
         self.assertEqual([s.get('action') for s in flow['steps'][:4:2]], ['askForApproval', 'askForApproval'])
 
     def test_documented_action_names_bind(self):
-        sys.path.insert(0, str(REAL_CATALOG.parent.parent / 'scripts'))
+        sys.path.insert(0, str(HERE.parent.parent / 'playbook-author' / 'scripts'))
         try:
             import create as pb
         finally:
