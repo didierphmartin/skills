@@ -16,7 +16,9 @@ Input (-i): JSON written by the model:
     {"text": "Validate the request:", "sub": ["Sufficient balance? If not, #Send Direct Message ..."]}
   ],
   "tools_used": ["Workday", "Slack"],     # optional — servers of bound actions are merged in
-  "actions_used": ["#Lookup Users"]       # optional — derived from the prose when omitted
+  "actions_used": ["#Lookup Users"],      # optional — derived from the prose when omitted
+  "inputs": [{"name": "start_date", "label": "Start date", "type": "date", "mandatory": true}]
+                                           # optional — fields the ServiceNow request carries in "answers"
 }
 
 Checks (mirror the PHP kernel):
@@ -26,6 +28,7 @@ Checks (mirror the PHP kernel):
   * each custom action scored against references/mcp-catalog.md with the
     analyzer's auto-binding rule (server token = 4, tool token = 2, +1 full
     cover; needs >= 4 and a unique best) → bound / unbound
+--unattended: gate verbs (GATE_VERBS) and unbound actions are errors (exit 1).
 Exit 1 on structural errors (fix and re-run); exit 0 with warnings for
 unbound actions (legal at run time — the handoff policy applies).
 """
@@ -37,6 +40,11 @@ NATIVE_VERBS = {
     '#send direct message', '#send channel message', '#send email', '#leave internal note',
     '#resolve request', '#escalate request', '#request approval', '#prompt for handoff', '#trigger form',
 }
+# Native verbs that open a human gate (wait for a person). Read from the backend:
+# gpt/backend/src/Playbook/GateManager.php (KIND_MAP: trigger_form, request_approval,
+# prompt_handoff, await_message) and PlaybookAnalyzer.php (GATE_BY_NATIVE, the three
+# that have a native verb; await_message is only a runtime fallback, it has no verb).
+GATE_VERBS = {'#trigger form', '#request approval', '#prompt for handoff'}
 STOP = {'custom', 'the', 'a', 'an', 'by', 'for', 'to', 'and', 'of', 'action'}
 ACTION_RE = re.compile(r"#[A-Z][\w'’]*(?: [A-Z][\w'’]*){0,5}(?: \([A-Za-z ]+\))?")
 # Native verbs may carry lowercase words ("#Prompt for Handoff"), which ACTION_RE
@@ -88,23 +96,36 @@ def load_catalog(explicit: str | None) -> tuple[list[tuple[str, str, str]], str 
     return [], None
 
 
+def score(at: list[str], server: str, tool: str) -> int:
+    """The analyzer's auto-binding score of action tokens `at` against one catalog tool."""
+    n = sum(4 for st in tok(server) if st in at)
+    tt = tok(tool)
+    hits = sum(1 for t in tt if t in at)
+    n += 2 * hits
+    if tt and hits == len(tt):
+        n += 1
+    return n
+
+
 def auto_bind(action: str, tools: list[tuple[str, str, str]]) -> tuple[str | None, int, bool]:
     at = tok(action)
     if not at:
         return None, 0, False
     best, best_score, tie = None, 0, False
     for server, _name, tool in tools:
-        score = sum(4 for st in tok(server) if st in at)
-        tt = tok(tool)
-        hits = sum(1 for t in tt if t in at)
-        score += 2 * hits
-        if tt and hits == len(tt):
-            score += 1
-        if score > best_score:
-            best, best_score, tie = f'{server}.{tool}', score, False
-        elif score == best_score and score > 0:
+        sc = score(at, server, tool)
+        if sc > best_score:
+            best, best_score, tie = f'{server}.{tool}', sc, False
+        elif sc == best_score and sc > 0:
             tie = True
     return (best if best_score >= 4 and not tie else None), best_score, tie
+
+
+def candidates(action: str, tools: list[tuple[str, str, str]], n: int = 3) -> list[str]:
+    """The n best-scoring catalog functions for an unbound action, as "Server: tool"."""
+    at = tok(action)
+    scored = sorted(((score(at, s, t), name, t) for s, name, t in tools), key=lambda x: -x[0])
+    return [f'{name}: {t}' for sc, name, t in scored[:n] if sc > 0]
 
 
 def render(d: dict) -> str:
@@ -115,6 +136,10 @@ def render(d: dict) -> str:
     if d.get('domain'):
         lines += [f"Domain: {d['domain'].strip()}", '']
     lines += [f"Trigger: {d['trigger'].strip()}", '', 'Instructions:']
+    if d.get('inputs'):
+        carried = ', '.join(f"{i['name']} ({i['type']}, {'required' if i.get('mandatory') else 'optional'})"
+                            for i in d['inputs'])
+        lines.append(f'The request is a ServiceNow job: its "answers" carry {carried}.')
     for i, step in enumerate(d['steps'], 1):
         lines.append(f"{i}. {step['text'].strip()}")
         for sub in step.get('sub') or []:
@@ -128,6 +153,9 @@ def check(d: dict, tools: list[tuple[str, str, str]]) -> tuple[list[str], list[s
     for k in ('title', 'trigger'):
         if not str(d.get(k, '')).strip():
             errors.append(f'missing "{k}"')
+    for n, i in enumerate(d.get('inputs') or [], 1):
+        if not (isinstance(i, dict) and str(i.get('name', '')).strip() and str(i.get('type', '')).strip()):
+            errors.append(f'inputs[{n}] needs a "name" and a "type" ({{name, label, type, mandatory}})')
     steps = d.get('steps') or []
     if not steps or not all(isinstance(s, dict) and str(s.get('text', '')).strip() for s in steps):
         errors.append('"steps" must be a non-empty list of {"text": ..., "sub": [...]}')
@@ -175,13 +203,15 @@ def check(d: dict, tools: list[tuple[str, str, str]]) -> tuple[list[str], list[s
     for a in listed:
         if a.lower() in NATIVE_VERBS:
             bound[a] = 'native'; continue
-        target, score, tie = auto_bind(a, tools)
+        target, _score, tie = auto_bind(a, tools)
         if target:
             bound[a] = target; servers.add(target.split('.')[0])
         else:
             unbound.append(a)
-            hint = ' (ambiguous — two tools score the same; add the server name to the action)' if tie else (
-                ' name it after the MCP function, e.g. "#Get PTO Balance"; add the server name if two servers have it)' if score < 4 else '')
+            close = candidates(a, tools)
+            hint = ' (ambiguous — two tools score the same)' if tie else ''
+            hint += (f'; closest: {", ".join(close)} — name it after one of these functions'
+                     if close else '; no catalog function matches — use a native verb or #Prompt for Handoff')
             warnings.append(f'{a} is unbound{hint} — {where.get(a.lower(), "?")}')
     # tools used: merge servers of bound actions (display names)
     names = {s: n for s, n, _ in tools}
@@ -195,12 +225,73 @@ def check(d: dict, tools: list[tuple[str, str, str]]) -> tuple[list[str], list[s
     return errors, warnings, notices, {'bound': bound, 'unbound': unbound}
 
 
-def main() -> int:
+CUT_RE = re.compile(r"^:?((?: [A-Za-z][\w'’]*){1,5})")
+
+
+def unbound_hint(action: str, line: str, tools: list[tuple[str, str, str]]) -> str:
+    """Why `action` (found in `line`) does not bind, and the name to write instead. A lowercase word or a ':'
+    ends an action name ("#Add User to Okta Group" is read as "#Add User"): when the words that follow,
+    capitalised, make a name that binds, give that name; otherwise the closest catalog functions."""
+    i = line.find(action)
+    rest = line[i + len(action):] if i >= 0 else ''
+    m = CUT_RE.match(rest) if rest[:1] == ':' or re.match(r' [a-z]', rest) else None
+    if m:
+        best = None   # (score, name, target): the highest-scoring longer name, the shortest on a tie
+        words = m.group(1).split()
+        for n in range(1, len(words) + 1):
+            name = action + ' ' + ' '.join(w[:1].upper() + w[1:] for w in words[:n])
+            target, sc, _tie = auto_bind(name, tools)
+            if target and (best is None or sc > best[0]):
+                best = (sc, name, target)
+        if best:
+            return (f'; read as {action} because a lowercase word or ":" ends an action name — '
+                    f'write {best[1]} (binds to {best[2]})')
+    tie = auto_bind(action, tools)[2]
+    close = candidates(action, tools)
+    hint = ' (ambiguous — two tools score the same; add the server name)' if tie else ''
+    return hint + (f'; closest: {", ".join(close)} — name it after one of these functions, in capitalised words'
+                   if close else '; no catalog function matches')
+
+
+def run_unattended_check(text: str, catalog: list[tuple[str, str, str]]) -> list[str]:
+    """Errors that make a rendered playbook unfit for an unattended run: any gate
+    verb (it would wait for a person) and any action that does not bind. Each names
+    the step. `catalog` is load_catalog()'s tool list; empty means binding is skipped."""
+    errors, step, seen = [], 0, set()
+    in_steps = False
+    for line in text.splitlines():
+        if line.startswith('Instructions:'):
+            in_steps = True; continue
+        if not in_steps:
+            continue
+        if re.match(r'(Tools|Actions) used:', line):
+            break
+        m = re.match(r'(\d+)\.\s', line)
+        if m:
+            step = int(m.group(1))
+        elif not line.startswith('- '):
+            continue
+        for a in find_actions(line):
+            key = (step, a.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            if a.lower() in GATE_VERBS:
+                errors.append(f'{a} waits for a person, which an unattended run cannot do — step {step}: "{line.strip()[:80]}"')
+            elif a.lower() not in NATIVE_VERBS and catalog and not auto_bind(a, catalog)[0]:
+                errors.append(f'{a} is unbound, and an unattended run has no human to take over'
+                              f'{unbound_hint(a, line, catalog)} — step {step}: "{line.strip()[:80]}"')
+    return errors
+
+
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description='Render + check a Console-style playbook.')
     p.add_argument('-i', '--input', required=True, help='draft JSON (see module docstring)')
     p.add_argument('-o', '--output', required=True, help='where to write the playbook text (.md)')
     p.add_argument('--catalog', default=None, help='mcp-catalog.md path (auto-detected)')
-    a = p.parse_args()
+    p.add_argument('--unattended', action='store_true',
+                   help='no human will answer: gate verbs and unbound actions are errors')
+    a = p.parse_args(argv)
     try:
         d = json.loads(Path(a.input).read_text(encoding='utf-8'))
     except Exception as e:  # noqa: BLE001
@@ -211,6 +302,12 @@ def main() -> int:
         print(f'INVALID — {len(errors)} problem(s):\n  - ' + '\n  - '.join(errors), file=sys.stderr)
         return 1
     text = render(d)
+    if a.unattended:
+        problems = run_unattended_check(text, tools)
+        if problems:
+            print(f'INVALID — {len(problems)} problem(s) for an unattended run:\n  - ' + '\n  - '.join(problems),
+                  file=sys.stderr)
+            return 1
     out = Path(a.output); out.parent.mkdir(parents=True, exist_ok=True); out.write_text(text, encoding='utf-8')
     print(f'wrote {out}')
     print(f'catalog: {cat_path or "NOT FOUND — binding check skipped"}')

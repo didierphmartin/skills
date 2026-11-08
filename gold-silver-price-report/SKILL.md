@@ -1,6 +1,7 @@
 ---
 name: gold-silver-price-report
 description: Multi-agent workflow to research and compile a comprehensive report on gold and silver prices using market news and financial data
+requires-skills: []
 fetches_urls: false
 execution: compiled-pyodide
 ---

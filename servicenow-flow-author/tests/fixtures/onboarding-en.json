@@ -1,0 +1,442 @@
+{
+ "name": "new-employee-onboarding",
+ "title": "New employee onboarding",
+ "description": "Manager approval, IT accounts and Facilities in parallel, one hardware request per equipment item, reminders two working days before the start date, escalation and welcome on the start date.",
+ "language": "en",
+ "trigger": {
+  "type": "service_catalog"
+ },
+ "form": {
+  "submitted_by": "HR submits this form when it creates a new user record for an employee who hasn't started yet.",
+  "catalog": {
+   "placeholder": "service_catalog"
+  },
+  "category": {
+   "placeholder": "hr_category"
+  },
+  "variables": [
+   {
+    "name": "new_hire",
+    "label": "New hire",
+    "type": "reference",
+    "reference": "sys_user",
+    "mandatory": true,
+    "help": "The user record HR has just created."
+   },
+   {
+    "name": "manager",
+    "label": "Manager",
+    "type": "reference",
+    "reference": "sys_user",
+    "mandatory": true
+   },
+   {
+    "name": "department",
+    "label": "Department",
+    "type": "reference",
+    "reference": "cmn_department",
+    "mandatory": true
+   },
+   {
+    "name": "start_date",
+    "label": "Start date",
+    "type": "date",
+    "mandatory": true
+   },
+   {
+    "name": "equipment",
+    "label": "Equipment (laptop, monitor, phone…)",
+    "type": "list_collector",
+    "reference": "cmdb_model",
+    "mandatory": true,
+    "help": "One hardware request is created for each item."
+   },
+   {
+    "name": "first_day_info",
+    "label": "First-day information",
+    "type": "multi_line_text",
+    "mandatory": true,
+    "help": "Sent to the new hire in the welcome email on the start date."
+   }
+  ]
+ },
+ "placeholders": {
+  "service_catalog": {
+   "kind": "catalog",
+   "description": "The catalog the onboarding item is listed in (sc_catalog sys_id), e.g. Service Catalog."
+  },
+  "hr_category": {
+   "kind": "category",
+   "description": "The category HR finds the item in (sc_category sys_id)."
+  },
+  "hr_rejection_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to HR when the manager does not approve (rejected, cancelled…); include the approval comments (the reason)."
+  },
+  "it_service_desk_group": {
+   "kind": "group",
+   "description": "IT service desk assignment group (sys_id)."
+  },
+  "facilities_group": {
+   "kind": "group",
+   "description": "Facilities assignment group (sys_id)."
+  },
+  "hardware_group": {
+   "kind": "group",
+   "description": "IT hardware team assignment group (sys_id)."
+  },
+  "working_days_schedule": {
+   "kind": "schedule",
+   "description": "Schedule (cmn_schedule sys_id) that 'two working days' is counted on. The wait counts each day as 24 hours of schedule time (wfa-flow-logic-api.md:493, business-hours calculation), so use a Monday–Friday all-day (24h) schedule with holidays; with an 8-hour working-day schedule, 2 days would be about 6 working days (express the offset in schedule hours instead, e.g. 16 hours for 2 days of an 8h schedule)."
+  },
+  "task_reminder_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_task reminding the assignment group that the task must be closed before the start date."
+  },
+  "it_manager_escalation_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to the IT manager: onboarding tasks still open on the start date."
+  },
+  "hr_escalation_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to HR: onboarding tasks still open on the start date."
+  },
+  "welcome_notification": {
+   "kind": "notification",
+   "description": "Notification on sc_req_item to the new hire (the New hire variable) with the First-day information variable — an email body cannot carry pills (action-api.md:256)."
+  }
+ },
+ "steps": [
+  {
+   "id": "ask_manager",
+   "label": "Manager approves the onboarding and the equipment list",
+   "action": "askForApproval",
+   "inputs": {
+    "record": {
+     "pill": "trigger.request_item"
+    },
+    "table": "sc_req_item",
+    "approval_reason": "Approve the onboarding and confirm the equipment list",
+    "approval_conditions": {
+     "rule": "Any",
+     "users": [
+      {
+       "pill": "form.manager"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "check_rejected",
+   "label": "Not approved by the manager?",
+   "logic": "if",
+   "condition": [
+    {
+     "pill": "ask_manager.approval_state"
+    },
+    "!=approved"
+   ],
+   "steps": [
+    {
+     "id": "notify_hr_rejected",
+     "label": "Notify HR, with the reason",
+     "action": "sendNotification",
+     "inputs": {
+      "notification": {
+       "placeholder": "hr_rejection_notification"
+      },
+      "record": {
+       "pill": "trigger.request_item"
+      },
+      "table_name": "sc_req_item"
+     }
+    },
+    {
+     "id": "end_rejected",
+     "label": "Stop: onboarding not approved",
+     "logic": "end"
+    }
+   ]
+  },
+  {
+   "id": "setup",
+   "label": "Accounts and desk in parallel",
+   "logic": "parallel",
+   "branches": [
+    [
+     {
+      "id": "task_accounts",
+      "label": "IT service desk: email, VPN, the department's apps",
+      "action": "createCatalogTask",
+      "inputs": {
+       "ah_requested_item": {
+        "pill": "trigger.request_item"
+       },
+       "ah_short_description": "Set up the accounts: email, VPN and the department's apps",
+       "ah_fields": {
+        "assignment_group": {
+         "placeholder": "it_service_desk_group"
+        }
+       },
+       "ah_wait": false
+      }
+     }
+    ],
+    [
+     {
+      "id": "task_facilities",
+      "label": "Facilities: desk and badge",
+      "action": "createCatalogTask",
+      "inputs": {
+       "ah_requested_item": {
+        "pill": "trigger.request_item"
+       },
+       "ah_short_description": "Prepare the desk and the badge",
+       "ah_fields": {
+        "assignment_group": {
+         "placeholder": "facilities_group"
+        }
+       },
+       "ah_wait": false
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "id": "equipment_items",
+   "label": "The items on the approved equipment list",
+   "action": "lookUpRecords",
+   "inputs": {
+    "table": "cmdb_model",
+    "conditions": [
+     "sys_idIN",
+     {
+      "pill": "form.equipment"
+     }
+    ],
+    "max_results": 50
+   }
+  },
+  {
+   "id": "each_item",
+   "label": "One hardware request per item",
+   "logic": "for_each",
+   "items": {
+    "pill": "equipment_items.Records"
+   },
+   "item": "equipment_item",
+   "steps": [
+    {
+     "id": "task_hardware",
+     "label": "Hardware request for this item",
+     "action": "createCatalogTask",
+     "inputs": {
+      "ah_requested_item": {
+       "pill": "trigger.request_item"
+      },
+      "ah_short_description": {
+       "pill": "equipment_item.name"
+      },
+      "ah_fields": {
+       "assignment_group": {
+        "placeholder": "hardware_group"
+       }
+      },
+      "ah_wait": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "mail_manager",
+   "label": "Summary email to the manager",
+   "action": "sendEmail",
+   "inputs": {
+    "ah_to": {
+     "pill": "form.manager.email"
+    },
+    "ah_subject": [
+     "Onboarding of ",
+     {
+      "pill": "form.new_hire.name"
+     },
+     ": start date ",
+     {
+      "pill": "form.start_date"
+     }
+    ],
+    "ah_body": "Requested: the accounts (email, VPN, the department's apps) from the IT service desk, the desk and the badge from Facilities, and one hardware request for each item on the approved equipment list. The start date is in the subject.",
+    "record": {
+     "pill": "trigger.request_item"
+    },
+    "table_name": "sc_req_item"
+   }
+  },
+  {
+   "id": "wait_t2",
+   "label": "Wait until two working days before the start date",
+   "logic": "wait_duration",
+   "duration": {
+    "days": 2
+   },
+   "direction": "before",
+   "relative_to": {
+    "pill": "form.start_date"
+   },
+   "schedule": {
+    "placeholder": "working_days_schedule"
+   }
+  },
+  {
+   "id": "open_t2",
+   "label": "Tasks still open",
+   "action": "lookUpRecords",
+   "inputs": {
+    "table": "sc_task",
+    "conditions": [
+     "active=true^request_item=",
+     {
+      "pill": "trigger.request_item"
+     }
+    ],
+    "max_results": 100
+   }
+  },
+  {
+   "id": "remind_open",
+   "label": "Any task still open?",
+   "logic": "if",
+   "condition": [
+    {
+     "pill": "open_t2.Count"
+    },
+    ">0"
+   ],
+   "steps": [
+    {
+     "id": "each_open",
+     "label": "Remind each assignment group",
+     "logic": "for_each",
+     "items": {
+      "pill": "open_t2.Records"
+     },
+     "item": "open_task",
+     "steps": [
+      {
+       "id": "remind_group",
+       "label": "Reminder to the assignment group",
+       "action": "sendNotification",
+       "inputs": {
+        "notification": {
+         "placeholder": "task_reminder_notification"
+        },
+        "record": {
+         "pill": "open_task.sys_id"
+        },
+        "table_name": "sc_task"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wait_start",
+   "label": "Wait until the start date, 9:00",
+   "logic": "wait_duration",
+   "duration": {
+    "hours": 9
+   },
+   "direction": "after",
+   "relative_to": {
+    "pill": "form.start_date"
+   }
+  },
+  {
+   "id": "open_start",
+   "label": "Tasks still open on the start date",
+   "action": "lookUpRecords",
+   "inputs": {
+    "table": "sc_task",
+    "conditions": [
+     "active=true^request_item=",
+     {
+      "pill": "trigger.request_item"
+     }
+    ],
+    "max_results": 100
+   }
+  },
+  {
+   "id": "escalate",
+   "label": "Still open on the start date?",
+   "logic": "if",
+   "condition": [
+    {
+     "pill": "open_start.Count"
+    },
+    ">0"
+   ],
+   "steps": [
+    {
+     "id": "notify_it_manager",
+     "label": "Escalate to the IT manager",
+     "action": "sendNotification",
+     "inputs": {
+      "notification": {
+       "placeholder": "it_manager_escalation_notification"
+      },
+      "record": {
+       "pill": "trigger.request_item"
+      },
+      "table_name": "sc_req_item"
+     }
+    },
+    {
+     "id": "notify_hr_open",
+     "label": "Inform HR",
+     "action": "sendNotification",
+     "inputs": {
+      "notification": {
+       "placeholder": "hr_escalation_notification"
+      },
+      "record": {
+       "pill": "trigger.request_item"
+      },
+      "table_name": "sc_req_item"
+     }
+    }
+   ]
+  },
+  {
+   "id": "welcome",
+   "label": "Welcome email with the first-day information",
+   "action": "sendNotification",
+   "inputs": {
+    "notification": {
+     "placeholder": "welcome_notification"
+    },
+    "record": {
+     "pill": "trigger.request_item"
+    },
+    "table_name": "sc_req_item"
+   }
+  },
+  {
+   "id": "log_done",
+   "label": "Log that onboarding is complete",
+   "action": "log",
+   "inputs": {
+    "log_level": "info",
+    "log_message": [
+     "Onboarding complete for ",
+     {
+      "pill": "form.new_hire.name"
+     }
+    ]
+   }
+  }
+ ]
+}

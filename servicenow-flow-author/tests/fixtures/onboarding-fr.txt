@@ -1,0 +1,17 @@
+Intégration d'un nouvel employé
+
+Lorsque les RH créent la fiche utilisateur d'un nouvel employé qui n'a pas encore commencé, lancer l'intégration.
+
+Demander d'abord au responsable de la nouvelle recrue d'approuver l'intégration et de confirmer la liste d'équipement. Si le responsable refuse, prévenir les RH en indiquant le motif et s'arrêter là.
+
+Une fois l'intégration approuvée, en parallèle :
+- créer une tâche pour le centre de services informatiques afin de configurer les comptes (messagerie, VPN, applications du service) ;
+- créer une tâche pour les Services généraux afin de préparer le bureau et le badge.
+
+Pour chaque article de la liste d'équipement approuvée (ordinateur portable, écran, téléphone…), créer une tâche distincte de demande de matériel pour l'équipe matériel informatique.
+
+Envoyer au responsable de la nouvelle recrue un courriel récapitulant ce qui a été demandé et la date de début.
+
+Deux jours ouvrés avant la date de début, vérifier que toutes les tâches sont fermées. Si certaines sont encore ouvertes, relancer les groupes d'affectation ; si elles sont encore ouvertes à la date de début, escalader au responsable informatique et informer les RH.
+
+À la date de début, envoyer à la nouvelle recrue un courriel de bienvenue avec ses informations pour le premier jour, et journaliser que l'intégration est terminée.
