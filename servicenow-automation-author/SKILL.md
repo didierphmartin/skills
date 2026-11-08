@@ -32,7 +32,7 @@ context-references: references/automation-spec.md
    `"--vendor", "<code>"` added.
 6. **Never invent instance data.** Groups, catalogs, categories and any record are placeholders
    (`servicenow.placeholders`); give a value only when the user gave it.
-7. **Your reply IS these lines, in this order, in the user's language — nothing else:**
+7. **Your reply IS these lines, in this order, in the language of the user's latest message (never one inferred from memory or profile) — nothing else:**
    ```
    ✅ <title> — automation <key> v<N>: flow added to <scope> (<M> flow(s) in the app).
    📁 ~/Documents/synergyAI/outputs/servicenow/<scope>/
