@@ -54,7 +54,9 @@ context-references: references/automation-spec.md
 
 1. `save_automation {key, title, spec}` — `key` = the spec's `name`. It creates the record (version 1) or, for an
    existing key, bumps the version. Keep what it returns: `version` (N), the automation id, and `playbook_id` /
-   `workflow_id` when the automation already existed.
+   `workflow_id` when the automation already existed. An existing automation also returns `previous_spec`, the
+   spec it had: start from it, not from your draft. Keep its approvals, notifications, form variables and playbook
+   steps, change only what the user asks for now, and remove something only when the user asked to.
 2. `run_skill_script` with EXACTLY this shape (the spec travels as ONE JSON string):
    ```json
    {
@@ -89,6 +91,7 @@ context-references: references/automation-spec.md
 
 ## Regenerating
 
-The same key again regenerates the automation: `save_automation` bumps the version, and steps 3–4 overwrite the
-managed playbook and workflow in place. Until the new flow is installed, new orders carry the old version and are
+The same key again regenerates the automation: `save_automation` bumps the version and returns `previous_spec`
+(step 1: what the user did not ask to change stays), and steps 3–4 overwrite the managed playbook and workflow in
+place. Until the new flow is installed, new orders carry the old version and are
 handed back as out of sync — say so when the install is manual.
