@@ -1,0 +1,8 @@
+{
+  "name": "ledger",
+  "title": "Ledger database",
+  "target": {"cloud": "aws", "region": "eu-west-1"},
+  "components": [
+    {"type": "postgres", "name": "ledger", "size": "medium", "storage_gb": 64}
+  ]
+}

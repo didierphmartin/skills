@@ -1,0 +1,29 @@
+{
+  "name": "shop",
+  "title": "Online shop",
+  "environment": "staging",
+  "target": {"cloud": "aws", "region": "us-east-1"},
+  "network": {"cidr": "172.16.0.0/22"},
+  "components": [
+    {"type": "container_app", "name": "storefront", "image": {"placeholder": "storefront_image"}, "port": 80,
+     "cpu": 2, "memory_gb": 4, "min_instances": 2, "max_instances": 10, "public_https": true},
+    {"type": "container_app", "name": "api", "image": {"placeholder": "api_image"}, "cpu": 4, "memory_gb": 8,
+     "min_instances": 1, "max_instances": 5, "public_https": true, "env": {"LOG_LEVEL": "info"}},
+    {"type": "postgres", "name": "orders", "version": "17", "size": "large", "storage_gb": 512, "backup_days": 35,
+     "high_availability": true},
+    {"type": "object_storage", "name": "media"},
+    {"type": "secret", "name": "stripe_key"},
+    {"type": "secret", "name": "smtp_password"}
+  ],
+  "access": [
+    {"from": "storefront", "to": "media", "level": "read"},
+    {"from": "api", "to": "media", "level": "readwrite"},
+    {"from": "api", "to": "orders"},
+    {"from": "api", "to": "stripe_key"},
+    {"from": "api", "to": "smtp_password", "level": "read"}
+  ],
+  "placeholders": {
+    "storefront_image": "The storefront's container image (registry/name:tag).",
+    "api_image": "The API's container image (registry/name:tag)."
+  }
+}

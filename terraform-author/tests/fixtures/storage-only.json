@@ -1,0 +1,9 @@
+{
+  "name": "archive",
+  "title": "Document archive",
+  "target": {"cloud": "azure", "region": "northeurope"},
+  "components": [
+    {"type": "object_storage", "name": "documents"},
+    {"type": "secret", "name": "partner_token"}
+  ]
+}

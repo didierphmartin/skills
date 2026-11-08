@@ -1,0 +1,20 @@
+{
+  "name": "booking",
+  "title": "Booking site",
+  "target": {"cloud": "azure", "region": "westeurope"},
+  "components": [
+    {"type": "container_app", "name": "site", "image": {"placeholder": "site_image"}, "public_https": true},
+    {"type": "container_app", "name": "pricing", "image": {"placeholder": "pricing_image"}, "public_https": false},
+    {"type": "postgres", "name": "bookings"},
+    {"type": "secret", "name": "maps_key"}
+  ],
+  "access": [
+    {"from": "site", "to": "bookings"},
+    {"from": "pricing", "to": "bookings"},
+    {"from": "site", "to": "maps_key"}
+  ],
+  "placeholders": {
+    "site_image": "The site's container image (registry/name:tag).",
+    "pricing_image": "The pricing service's container image (registry/name:tag)."
+  }
+}
